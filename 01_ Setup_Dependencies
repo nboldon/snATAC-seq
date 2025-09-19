@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Step 2: Setup Download Dependencies for GSE154068 ATAC-seq Pipeline
+# Step 2: Setup Download Dependencies for snATAC-seq Pipeline
 # Configures SRA tools and download utilities within existing cellranger_atac environment
 
 set -euo pipefail
@@ -46,16 +46,14 @@ check_environment() {
     if [[ "${CONDA_DEFAULT_ENV:-}" == "$ENV_NAME" ]]; then
         print_success "Using conda environment: $ENV_NAME"
         return 0
+    elif [[ "${CONDA_DEFAULT_ENV:-}" != "" ]]; then
+        print_error "Currently in wrong environment: ${CONDA_DEFAULT_ENV}"
+        print_error "Please run: conda activate $ENV_NAME"
+        return 1
     elif command -v conda &> /dev/null; then
-        print_warning "Not in $ENV_NAME environment. Attempting to activate..."
-        eval "$(conda shell.bash hook)"
-        conda activate "$ENV_NAME" 2>/dev/null || {
-            print_error "Failed to activate $ENV_NAME environment"
-            print_error "Please run: conda activate $ENV_NAME"
-            return 1
-        }
-        print_success "Activated conda environment: $ENV_NAME"
-        return 0
+        print_error "No conda environment activated"
+        print_error "Please run: conda activate $ENV_NAME"
+        return 1
     fi
     
     # Check if we're on HPC with module system
@@ -111,8 +109,12 @@ setup_hpc_modules() {
 setup_conda_packages() {
     print_status "Installing additional packages in conda environment..."
     
-    eval "$(conda shell.bash hook)"
-    conda activate "$ENV_NAME"
+    # Verify we're in the correct environment
+    if [[ "${CONDA_DEFAULT_ENV:-}" != "$ENV_NAME" ]]; then
+        print_error "Not in $ENV_NAME environment. Please activate first:"
+        print_error "conda activate $ENV_NAME"
+        return 1
+    fi
     
     # Check if sra-tools is already installed
     if command -v fasterq-dump &> /dev/null; then
