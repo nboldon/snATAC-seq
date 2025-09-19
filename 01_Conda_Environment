@@ -310,33 +310,7 @@ install_cellranger_atac() {
     rm -f "$tar_file"
 }
 
-download_reference_genome() {
-    local platform=$1
-    
-    if [[ "$platform" != "linux" ]]; then
-        print_warning "Reference genome download skipped on $platform"
-        return 0
-    fi
-    
-    print_status "Downloading mm10 reference genome..."
-    
-    cd "$TOOLS_DIR"
-    local ref_url="https://cf.10xgenomics.com/supp/cell-atac/refdata-cellranger-atac-mm10-2020-A-2.0.0.tar.gz"
-    local ref_file="refdata-cellranger-atac-mm10-2020-A-2.0.0.tar.gz"
-    
-    if [[ -d "refdata-cellranger-atac-mm10-2020-A-2.0.0" ]]; then
-        print_success "mm10 reference already exists"
-        return 0
-    fi
-    
-    if wget "$ref_url" && tar -xzf "$ref_file"; then
-        print_success "mm10 reference genome downloaded"
-        rm -f "$ref_file"
-    else
-        print_error "Failed to download reference genome"
-        return 1
-    fi
-}
+# Reference genome download removed - this is handled in Step 3
 
 install_archr() {
     print_status "Installing ArchR and dependencies..."
@@ -441,9 +415,6 @@ main() {
     # Install Cell Ranger ATAC (Linux only)
     install_cellranger_atac "$platform"
     
-    # Download reference genome (Linux only)
-    download_reference_genome "$platform"
-    
     # Install ArchR
     install_archr
     
@@ -456,7 +427,7 @@ main() {
     echo "Next steps:"
     echo "1. Activate environment: conda activate $ENV_NAME"
     echo "2. Run setup dependencies script (Step 2)"
-    echo "3. Build custom reference if needed (Step 3)"
+    echo "3. Build custom mm10 reference (Step 3) - Linux only"
     
     # Cleanup YAML files
     rm -f "${ENV_NAME}_${platform}.yml" install_archr.R
