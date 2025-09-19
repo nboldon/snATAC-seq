@@ -1,0 +1,190 @@
+
+
+
+module load miniconda3/24.3.0
+conda activate cellranger_atac
+
+
+###############################################
+
+
+R
+
+# Load libraries
+library(ArchR)
+library(Seurat)
+library(BiocManager)
+library(BiocGenerics)
+library(clusterProfiler)  
+library(org.Mm.eg.db) #For mouse genomes
+library(AnnotationDbi)
+library(enrichplot)
+library(pheatmap)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+set.seed(1)
+
+setwd("/project/eon/protocol_paper/archr_analysis")
+addArchRGenome("mm10")
+addArchRThreads(threads=8)
+
+
+###############################################
+
+
+#Load project
+projP_2 <- loadArchRProject(path = "/project/eon/protocol_paper/Save-ProjP_2", force = FALSE, showLogo = FALSE)
+
+
+###############################################
+
+
+# Check fragment information across samples
+cellData <- getCellColData(projP_2)
+print(table(cellData$Sample))  # Check sample distribution
+
+#cortex_fresh_v1 cortex_v1-1_chromx   cortex_v2_chromx     cortex_v2_cont 
+#              4052               6230               6713               6384 
+
+
+# Look for samples with very low fragment counts
+print(summary(cellData$nFrags))
+
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#   1001   13093   22977   23931   32872   99055 
+
+
+###################
+###################
+
+
+bash
+
+conda install -c bioconda macs2
+
+# Verify installation
+which macs
+# ~/.conda/envs/cellranger_atac/bin/macs2
+macs2 --version
+
+
+
+R
+
+# Install the mouse mm10 BSgenome package
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+
+BiocManager::install("BSgenome.Mmusculus.UCSC.mm10")
+
+# Load the package
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+# Check current genome
+getGenome(projP_2)
+
+# If needed, reset the genome
+addArchRGenome("mm10")
+####################
+
+
+
+####################
+
+
+R
+
+
+## Pseudo-bulk replicates in ArchR
+
+projP_3 <- addGroupCoverages(ArchRProj = projP_2, groupBy = "Clusters") 
+
+
+
+# Calling Peaks w/ Macs2
+
+
+pathToMacs2 <- "/home/nboldon/.conda/envs/cellranger_atac/bin/macs2"
+## Test if the path works
+#system(paste(pathToMacs2, "--version")) 
+#pathToMacs2 <- findMacs2()
+
+projP_3 <- addReproduciblePeakSet(
+    ArchRProj = projP_3, 
+    groupBy = "Clusters", 
+    pathToMacs2 = pathToMacs2
+)
+
+
+    Group nCells nCellsUsed nReplicates nMin nMax maxPeaks
+C1     C1    199        199           2   40  159    99500
+C2     C2   1027       1027           4   58  356   150000
+C3     C3    129        129           2   40   89    64500
+C4     C4   1299       1299           4  236  397   150000
+C5     C5    308        308           4   50   92   150000
+C6     C6    504        504           4   72  160   150000
+C7     C7    653        540           2   40  500   150000
+C8     C8   4236       2000           4  500  500   150000
+C9     C9   2369       1847           4  347  500   150000
+C10   C10   3154       1616           4  116  500   150000
+C11   C11    127         93           2   43   50    46500
+C12   C12    264        264           4   44   79   132000
+C13   C13    449        449           4   78  143   150000
+C14   C14   2211       1881           4  381  500   150000
+C15   C15    871        871           4  122  254   150000
+C16   C16   1305       1305           4  225  364   150000
+C17   C17   1146       1146           4  146  355   150000
+C18   C18   2581       1953           4  453  500   150000
+C19   C19    143        143           2   51   92    71500
+C20   C20    404        404           4   94  106   150000
+
+
+
+####################3
+
+
+getPeakSet(projP_3)
+
+
+projP_3 <- addPeakMatrix(projP_3)
+
+
+#Verify matrices in project
+getAvailableMatrices(projP_3)
+
+
+
+###############################################
+
+
+# Identify marker peaks and account for differences in data quality amongst cell groups
+markersPeaks <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "PeakMatrix",
+    groupBy = "Clusters",
+  bias = c("TSSEnrichment", "log10(nFrags)"),
+  testMethod = "wilcoxon"
+)
+
+
+# To retrieve particular slices of the SummarizedExperiment; returns a list of DataFrame objects, one for each cell group
+markerList <- getMarkers(markersPeaks, cutOff = "FDR <= 0.01 & Log2FC >= 1.25")
+markerList
+
+# Save markerList as a .csv file locally
+write.csv(markerList, file = "/project/eon//protocol_paper/Peak_markerList.csv", row.names = FALSE)
+
+
+
+#########
+
+
+saveArchRProject(ArchRProj = projP_3, outputDirectory = "/project/eon/protocol_paper/Save-ProjP_3", load = FALSE)
+
+
+###############################################
+###############################################
+###############################################
+
+
