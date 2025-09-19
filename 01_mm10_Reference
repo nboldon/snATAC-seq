@@ -1,477 +1,71 @@
 #!/bin/bash
 
 # Step 3: Build mm10 Reference Genome for Cell Ranger ATAC
-# Creates custom mm10 reference compatible with Cell Ranger ATAC 2.1.0
-# Based on Ensembl genome and GENCODE annotations
 
-set -euo pipefail
 
-# Configuration
-GENOME="mm10"
-VERSION="2020-A"
-BUILD_DIR="${GENOME}-${VERSION}_build"
-SOURCE_DIR="reference_sources"
-ENV_NAME="cellranger_atac"
+# Genome metadata
+genome="mm10"
+version="2020-A"
 
-# URLs for source files
-FASTA_URL="http://ftp.ensembl.org/pub/release-98/fasta/mus_musculus/dna/Mus_musculus.GRCm38.dna.primary_assembly.fa.gz"
-GTF_URL="http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/gencode.vM23.primary_assembly.annotation.gtf.gz"
+# Set up source and build directories
+build="mm10-2020-A_build"
+mkdir -p "$build"
 
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Download source files if they do not exist in reference_sources/ folder
+source="reference_sources"
+mkdir -p "$source"
 
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
+fasta_url="http://ftp.ensembl.org/pub/release-98/fasta/mus_musculus/dna/Mus_musculus.GRCm38.dna.primary_assembly.fa.gz"
+fasta_in="${source}/Mus_musculus.GRCm38.dna.primary_assembly.fa"
+gtf_url="http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/gencode.vM23.primary_assembly.annotation.gtf.gz"
+gtf_in="${source}/gencode.vM23.primary_assembly.annotation.gtf"
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
+if [ ! -f "$fasta_in" ]; then
+    curl -sS "$fasta_url" | zcat > "$fasta_in"
+fi
+if [ ! -f "$gtf_in" ]; then
+    curl -sS "$gtf_url" | zcat > "$gtf_in"
+fi
 
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
+# Modify sequence headers in the Ensembl FASTA to match GENCODE format
+fasta_modified="$build/$(basename "$fasta_in").modified"
+cat "$fasta_in" \
+    | sed -E 's/^>(\S+).*/>\1 \1/' \
+    | sed -E 's/^>([0-9]+|[XY]) />chr\1 /' \
+    | sed -E 's/^>MT />chrM /' \
+    > "$fasta_modified"
 
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# Remove version suffix from transcript, gene, and exon IDs
+gtf_modified="$build/$(basename "$gtf_in").modified"
+ID="(ENS(MUS)?[GTE][0-9]+)\.([0-9]+)"
+cat "$gtf_in" \
+    | sed -E 's/gene_id "'"$ID"'";/gene_id "\1"; gene_version "\3";/' \
+    | sed -E 's/transcript_id "'"$ID"'";/transcript_id "\1"; transcript_version "\3";/' \
+    | sed -E 's/exon_id "'"$ID"'";/exon_id "\1"; exon_version "\3";/' \
+    > "$gtf_modified"
 
-check_prerequisites() {
-    echo "======================================================"
-    echo "mm10 Reference Genome Builder for Cell Ranger ATAC"
-    echo "======================================================"
-    echo "Genome: $GENOME"
-    echo "Version: $VERSION"
-    echo "Build directory: $BUILD_DIR"
-    echo ""
-    
-    # Check if we're on Linux (required for cellranger-atac mkref)
-    if [[ "$(uname -s)" != "Linux" ]]; then
-        print_error "Cell Ranger ATAC mkref only runs on Linux systems"
-        print_status "Current OS: $(uname -s)"
-        exit 1
-    fi
-    
-    # Check conda environment
-    if [[ "${CONDA_DEFAULT_ENV:-}" != "$ENV_NAME" ]]; then
-        print_warning "Not in $ENV_NAME environment"
-        if command -v conda &> /dev/null; then
-            print_status "Activating $ENV_NAME environment..."
-            eval "$(conda shell.bash hook)"
-            conda activate "$ENV_NAME" || {
-                print_error "Failed to activate $ENV_NAME environment"
-                exit 1
-            }
-        else
-            print_error "Conda not available and not in correct environment"
-            exit 1
-        fi
-    fi
-    
-    # Check for cellranger-atac
-    if ! command -v cellranger-atac &> /dev/null; then
-        print_warning "cellranger-atac not found in PATH"
-        
-        # Try common installation locations
-        local possible_paths=(
-            "$HOME/tools/cellranger-atac-2.1.0"
-            "/opt/cellranger-atac-2.1.0"
-            "/usr/local/cellranger-atac-2.1.0"
-        )
-        
-        local found_path=""
-        for path in "${possible_paths[@]}"; do
-            if [[ -f "$path/cellranger-atac" ]]; then
-                found_path="$path"
-                break
-            fi
-        done
-        
-        if [[ -n "$found_path" ]]; then
-            print_status "Found Cell Ranger ATAC at: $found_path"
-            export PATH="$found_path:$PATH"
-            print_success "Added Cell Ranger ATAC to PATH for this session"
-        else
-            print_error "cellranger-atac not found in common locations"
-            print_status "Please ensure Cell Ranger ATAC is installed and either:"
-            print_status "1. Add it to PATH: export PATH=/path/to/cellranger-atac:\$PATH"
-            print_status "2. Or install it using Step 1 script"
-            exit 1
-        fi
-    fi
-    
-    print_success "Prerequisites check passed"
-}
+# Define biotype patterns
+BIOTYPE_PATTERN="(protein_coding|lncRNA|IG_C_gene|IG_D_gene|IG_J_gene|IG_LV_gene|IG_V_gene|IG_V_pseudogene|IG_J_pseudogene|IG_C_pseudogene|TR_C_gene|TR_D_gene|TR_J_gene|TR_V_gene|TR_V_pseudogene|TR_J_pseudogene)"
+GENE_PATTERN="gene_type \"${BIOTYPE_PATTERN}\""
+TX_PATTERN="transcript_type \"${BIOTYPE_PATTERN}\""
+READTHROUGH_PATTERN="tag \"readthrough_transcript\""
 
-setup_directories() {
-    print_status "Setting up build directories..."
-    
-    # Create directories
-    mkdir -p "$SOURCE_DIR" "$BUILD_DIR"
-    
-    print_success "Directories created:"
-    print_status "  Source: $SOURCE_DIR"
-    print_status "  Build: $BUILD_DIR"
-}
+# Create gene allowlist
+cat "$gtf_modified" \
+    | awk '$3 == "transcript"' \
+    | grep -E "$GENE_PATTERN" \
+    | grep -E "$TX_PATTERN" \
+    | grep -Ev "$READTHROUGH_PATTERN" \
+    | sed -E 's/.*(gene_id "[^"]+").*/\1/' \
+    | sort \
+    | uniq \
+    > "${build}/gene_allowlist"
 
-download_source_files() {
-    print_status "Downloading source files..."
-    
-    local fasta_file="$SOURCE_DIR/Mus_musculus.GRCm38.dna.primary_assembly.fa"
-    local gtf_file="$SOURCE_DIR/gencode.vM23.primary_assembly.annotation.gtf"
-    
-    # Download FASTA if not present
-    if [[ ! -f "$fasta_file" ]]; then
-        print_status "Downloading Ensembl FASTA..."
-        if curl -fsSL "$FASTA_URL" | gunzip > "$fasta_file"; then
-            print_success "FASTA downloaded: $(basename "$fasta_file")"
-        else
-            print_error "Failed to download FASTA file"
-            exit 1
-        fi
-    else
-        print_success "FASTA file already exists: $(basename "$fasta_file")"
-    fi
-    
-    # Download GTF if not present
-    if [[ ! -f "$gtf_file" ]]; then
-        print_status "Downloading GENCODE GTF..."
-        if curl -fsSL "$GTF_URL" | gunzip > "$gtf_file"; then
-            print_success "GTF downloaded: $(basename "$gtf_file")"
-        else
-            print_error "Failed to download GTF file"
-            exit 1
-        fi
-    else
-        print_success "GTF file already exists: $(basename "$gtf_file")"
-    fi
-    
-    # Verify file integrity
-    print_status "Verifying file integrity..."
-    
-    # Check FASTA
-    if grep -q "^>" "$fasta_file" && [[ $(wc -l < "$fasta_file") -gt 1000 ]]; then
-        print_success "FASTA file appears valid"
-    else
-        print_error "FASTA file appears corrupted"
-        rm -f "$fasta_file"
-        exit 1
-    fi
-    
-    # Check GTF
-    if grep -q "^#" "$gtf_file" && grep -q -E "\tgene\t" "$gtf_file"; then
-        print_success "GTF file appears valid"
-        
-        # Additional checks
-        local gene_count=$(grep -c -E "\tgene\t" "$gtf_file")
-        local transcript_count=$(grep -c -E "\ttranscript\t" "$gtf_file")
-        print_status "GTF contains $gene_count genes and $transcript_count transcripts"
-        
-        if [[ $gene_count -lt 10000 ]]; then
-            print_warning "GTF has unusually few genes ($gene_count), may be incomplete"
-        fi
-    else
-        print_error "GTF file appears corrupted or incomplete"
-        print_status "Checking file contents..."
-        
-        # Show file size and first few lines for debugging
-        local file_size=$(du -h "$gtf_file" | cut -f1)
-        print_status "GTF file size: $file_size"
-        
-        if [[ -s "$gtf_file" ]]; then
-            print_status "First 10 lines of GTF file:"
-            head -10 "$gtf_file"
-            print_status "Last 5 lines of GTF file:"
-            tail -5 "$gtf_file"
-        else
-            print_error "GTF file is empty"
-        fi
-        
-        print_status "Removing corrupted file and retrying download..."
-        rm -f "$gtf_file"
-        
-        print_status "Retrying GTF download with different method..."
-        if wget -O "$gtf_file" "$GTF_URL"; then
-            print_status "Alternative download completed, verifying..."
-            if grep -q "^#" "$gtf_file" && grep -q -E "\tgene\t" "$gtf_file"; then
-                print_success "GTF file is now valid"
-            else
-                print_error "GTF download still failed"
-                exit 1
-            fi
-        else
-            print_error "Alternative GTF download also failed"
-            print_status "You may need to manually download from: $GTF_URL"
-            exit 1
-        fi
-    fi
-    
-    # Show file sizes
-    print_status "File sizes:"
-    ls -lh "$fasta_file" "$gtf_file"
-}
+# Filter GTF file
+gtf_filtered="${build}/$(basename "$gtf_in").filtered"
+grep -E "^#" "$gtf_modified" > "$gtf_filtered"
+grep -Ff "${build}/gene_allowlist" "$gtf_modified" >> "$gtf_filtered"
 
-process_fasta() {
-    print_status "Processing FASTA file for Cell Ranger ATAC compatibility..."
-    
-    local fasta_in="$SOURCE_DIR/Mus_musculus.GRCm38.dna.primary_assembly.fa"
-    local fasta_out="$BUILD_DIR/$(basename "$fasta_in").modified"
-    
-    print_status "Modifying chromosome names to match GENCODE format..."
-    
-    # Modify sequence headers to match GENCODE format
-    # This is crucial for Cell Ranger ATAC compatibility
-    cat "$fasta_in" | sed -E '
-        # Add chromosome identifier as second field for primary contigs
-        s/^>([0-9]+|[XYM]|MT) .*/>\1 \1/
-        # Convert numbered chromosomes to chr format
-        s/^>([0-9]+) />\1 chr\1/
-        # Convert X, Y to chr format  
-        s/^>(X|Y) />\1 chr\1/
-        # Convert MT/M to chrM
-        s/^>(MT?) />chrM chrM/
-        # Keep other sequences as-is but add identifier
-        /^>[0-9XYM]|^>MT|^>chrM/!{
-            s/^>([^ ]+).*/>\1 \1/
-        }
-    ' > "$fasta_out"
-    
-    print_success "FASTA processed: $(basename "$fasta_out")"
-    
-    # Verify the modification worked
-    print_status "Chromosome naming verification:"
-    grep "^>" "$fasta_out" | head -10
-    
-    local chr_count=$(grep "^>chr" "$fasta_out" | wc -l)
-    print_status "Chromosomes with 'chr' prefix: $chr_count"
-}
-
-process_gtf() {
-    print_status "Processing GTF file..."
-    
-    local gtf_in="$SOURCE_DIR/gencode.vM23.primary_assembly.annotation.gtf"
-    local gtf_modified="$BUILD_DIR/$(basename "$gtf_in").modified"
-    local gtf_filtered="$BUILD_DIR/$(basename "$gtf_in").filtered"
-    
-    print_status "Removing version suffixes from gene/transcript IDs..."
-    
-    # Remove version suffixes from Ensembl IDs
-    # This makes the GTF compatible with Cell Ranger ATAC
-    local ID_PATTERN="(ENS(MUS)?[GTE][0-9]+)\.([0-9]+)"
-    
-    sed -E "
-        s/gene_id \"$ID_PATTERN\";/gene_id \"\1\"; gene_version \"\3\";/g
-        s/transcript_id \"$ID_PATTERN\";/transcript_id \"\1\"; transcript_version \"\3\";/g  
-        s/exon_id \"$ID_PATTERN\";/exon_id \"\1\"; exon_version \"\3\";/g
-    " "$gtf_in" > "$gtf_modified"
-    
-    print_success "GTF IDs processed: $(basename "$gtf_modified")"
-    
-    print_status "Creating gene allowlist for Cell Ranger ATAC..."
-    
-    # Define biotype patterns for genes suitable for ATAC-seq analysis
-    local BIOTYPE_PATTERN="(protein_coding|lncRNA|IG_C_gene|IG_D_gene|IG_J_gene|IG_LV_gene|IG_V_gene|IG_V_pseudogene|IG_J_pseudogene|IG_C_pseudogene|TR_C_gene|TR_D_gene|TR_J_gene|TR_V_gene|TR_V_pseudogene|TR_J_pseudogene)"
-    local GENE_PATTERN="gene_type \"$BIOTYPE_PATTERN\""
-    local TX_PATTERN="transcript_type \"$BIOTYPE_PATTERN\""
-    local READTHROUGH_PATTERN="tag \"readthrough_transcript\""
-    
-    # Extract allowed genes
-    awk '$3 == "transcript"' "$gtf_modified" | \
-    grep -E "$GENE_PATTERN" | \
-    grep -E "$TX_PATTERN" | \
-    grep -Ev "$READTHROUGH_PATTERN" | \
-    sed -E 's/.*(gene_id "[^"]+").*/\1/' | \
-    sort | uniq > "$BUILD_DIR/gene_allowlist"
-    
-    local gene_count=$(wc -l < "$BUILD_DIR/gene_allowlist")
-    print_success "Gene allowlist created with $gene_count genes"
-    
-    print_status "Filtering GTF to allowed genes only..."
-    
-    # Create filtered GTF with only allowed genes
-    {
-        grep -E "^#" "$gtf_modified"
-        grep -Ff "$BUILD_DIR/gene_allowlist" "$gtf_modified"
-    } > "$gtf_filtered"
-    
-    local filtered_lines=$(grep -v "^#" "$gtf_filtered" | wc -l)
-    print_success "Filtered GTF created with $filtered_lines annotation lines"
-    
-    # Show some statistics
-    print_status "Gene type distribution:"
-    grep -v "^#" "$gtf_filtered" | awk '$3 == "gene"' | \
-    grep -o 'gene_type "[^"]*"' | sort | uniq -c | sort -nr | head -10
-}
-
-build_reference() {
-    print_status "Building Cell Ranger ATAC reference..."
-    
-    local fasta_file="$BUILD_DIR/Mus_musculus.GRCm38.dna.primary_assembly.fa.modified"
-    local gtf_file="$BUILD_DIR/gencode.vM23.primary_assembly.annotation.gtf.filtered"
-    local ref_name="refdata-cellranger-atac-${GENOME}-${VERSION}"
-    
-    # Remove existing reference if present
-    if [[ -d "$ref_name" ]]; then
-        print_warning "Existing reference found. Removing..."
-        rm -rf "$ref_name"
-    fi
-    
-    print_status "Running cellranger-atac mkref..."
-    print_status "This may take 30-60 minutes depending on system performance..."
-    
-    # Build reference
-    if cellranger-atac mkref \
-        --ref-version="$VERSION" \
-        --genome="$GENOME" \
-        --fasta="$fasta_file" \
-        --genes="$gtf_file"; then
-        
-        print_success "Reference genome built successfully!"
-        print_success "Output directory: $ref_name"
-        
-        # Show reference contents
-        print_status "Reference contents:"
-        ls -la "$ref_name/"
-        
-        # Show reference size
-        local ref_size=$(du -sh "$ref_name" | cut -f1)
-        print_status "Reference size: $ref_size"
-        
-    else
-        print_error "cellranger-atac mkref failed"
-        exit 1
-    fi
-}
-
-create_usage_info() {
-    print_status "Creating usage information..."
-    
-    local ref_name="refdata-cellranger-atac-${GENOME}-${VERSION}"
-    
-    cat > reference_info.txt << EOF
-mm10 Cell Ranger ATAC Reference Information
-==========================================
-
-Reference Name: $ref_name
-Genome: $GENOME
-Version: $VERSION
-Build Date: $(date)
-
-Usage in Cell Ranger ATAC:
---------------------------
-cellranger-atac count \\
-    --id=sample_name \\
-    --reference=$PWD/$ref_name \\
-    --fastqs=/path/to/fastqs \\
-    --sample=sample_name
-
-Integration with Pipeline:
--------------------------
-Set this in your analysis scripts:
-REFERENCE_PATH="$PWD/$ref_name"
-
-Source Files Used:
------------------
-FASTA: $FASTA_URL
-GTF: $GTF_URL
-
-Processing Applied:
-------------------
-- Chromosome names modified for GENCODE compatibility
-- Gene IDs de-versioned for Cell Ranger compatibility  
-- Gene allowlist created excluding readthrough transcripts
-- Only protein-coding and immunoglobulin genes included
-
-Quality Control:
----------------
-Total genes in reference: $(grep -c "^>" "$ref_name/fasta/genome.fa" 2>/dev/null || echo "N/A")
-Chromosomes included: $(grep "^>" "$ref_name/fasta/genome.fa" 2>/dev/null | wc -l || echo "N/A")
-
-EOF
-    
-    print_success "Reference information saved to reference_info.txt"
-}
-
-cleanup_build_files() {
-    print_status "Cleaning up intermediate files..."
-    
-    # Keep source files but remove build intermediates
-    if [[ -d "$BUILD_DIR" ]]; then
-        print_status "Removing build directory: $BUILD_DIR"
-        rm -rf "$BUILD_DIR"
-    fi
-    
-    print_success "Build cleanup completed"
-}
-
-verify_reference() {
-    print_status "Verifying reference integrity..."
-    
-    local ref_name="refdata-cellranger-atac-${GENOME}-${VERSION}"
-    
-    # Check essential files exist
-    local required_files=(
-        "$ref_name/fasta/genome.fa"
-        "$ref_name/genes/genes.gtf"
-        "$ref_name/reference.json"
-    )
-    
-    local missing_files=()
-    for file in "${required_files[@]}"; do
-        if [[ -f "$file" ]]; then
-            print_success "Found: $file"
-        else
-            missing_files+=("$file")
-            print_error "Missing: $file"
-        fi
-    done
-    
-    if [[ ${#missing_files[@]} -eq 0 ]]; then
-        print_success "Reference verification passed"
-        return 0
-    else
-        print_error "Reference verification failed - missing files"
-        return 1
-    fi
-}
-
-main() {
-    # Pre-flight checks
-    check_prerequisites
-    
-    # Setup
-    setup_directories
-    
-    # Download source files
-    download_source_files
-    
-    # Process files
-    process_fasta
-    process_gtf
-    
-    # Build reference
-    build_reference
-    
-    # Verify and document
-    verify_reference
-    create_usage_info
-    
-    # Cleanup
-    cleanup_build_files
-    
-    echo ""
-    echo "======================================================"
-    print_success "mm10 reference build completed successfully!"
-    echo "======================================================"
-    echo ""
-    echo "Reference location: refdata-cellranger-atac-${GENOME}-${VERSION}"
-    echo "Usage info: reference_info.txt"
-    echo ""
-    echo "Ready for Cell Ranger ATAC analysis!"
-}
-
-main "$@"
+# Create reference package
+cellranger-atac mkref --ref-version="$version" \
+    --genome="$genome" --fasta="$fasta_modified" --genes="$gtf_filtered"
