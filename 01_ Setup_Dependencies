@@ -1,0 +1,320 @@
+
+
+#!/bin/bash
+
+# Setup Dependencies for GSE154068 Download Pipeline
+# Installs required tools for downloading and splitting ATAC-seq data
+
+set -euo pipefail
+
+echo "Setup Dependencies for GSE154068 ATAC-seq Download"
+echo "================================================="
+echo "Host: $(hostname)"
+echo "OS: $(uname -s)"
+echo ""
+
+# ==== Check Current Environment ====
+check_environment() {
+    echo "Checking current environment..."
+    
+    # Check if we're on HPC with module system
+    if command -v module &> /dev/null; then
+        echo "   HPC module system detected"
+        echo "   Available modules:"
+        module avail sra-toolkit 2>&1 | head -5 || echo "     (No SRA toolkit modules found)"
+        echo ""
+        return 0
+    fi
+    
+    # Check if conda is available
+    if command -v conda &> /dev/null; then
+        echo "   Conda detected: $(conda --version)"
+        echo "   Current environment: ${CONDA_DEFAULT_ENV:-base}"
+        return 1
+    fi
+    
+    # Check if we have package managers
+    if command -v apt-get &> /dev/null; then
+        echo "   Debian/Ubuntu system detected"
+        return 2
+    elif command -v yum &> /dev/null; then
+        echo "   RHEL/CentOS system detected"
+        return 2
+    fi
+    
+    echo "   No recognized package manager found"
+    return 3
+}
+
+# ==== HPC Module Setup ====
+setup_hpc_modules() {
+    echo "Setting up HPC modules..."
+    
+    # Try common HPC module names
+    local modules_to_try=("sra-toolkit" "SRA-Toolkit" "sratoolkit" "ncbi-sra-tools")
+    local loaded_modules=()
+    
+    for module_name in "${modules_to_try[@]}"; do
+        if module load "$module_name" 2>/dev/null; then
+            echo "   ✅ Loaded: $module_name"
+            loaded_modules+=("$module_name")
+            break
+        fi
+    done
+    
+    # Try wget/curl modules
+    for tool in wget curl parallel; do
+        if ! command -v "$tool" &> /dev/null; then
+            if module load "$tool" 2>/dev/null; then
+                echo "   ✅ Loaded: $tool"
+                loaded_modules+=("$tool")
+            fi
+        fi
+    done
+    
+    if [[ ${#loaded_modules[@]} -gt 0 ]]; then
+        echo ""
+        echo "✅ HPC modules loaded successfully"
+        echo "💡 Add these to your job script or .bashrc:"
+        for mod in "${loaded_modules[@]}"; do
+            echo "   module load $mod"
+        done
+        return 0
+    else
+        echo "❌ No suitable HPC modules found"
+        echo "💡 Try: module avail | grep -i sra"
+        return 1
+    fi
+}
+
+# ==== Conda Setup ====
+setup_conda() {
+    echo "Setting up conda environment..."
+    
+    # Create dedicated environment for ATAC-seq tools
+    local env_name="atac_download"
+    
+    if conda env list | grep -q "$env_name"; then
+        echo "   ✅ Environment '$env_name' already exists"
+        echo "   Activating existing environment..."
+        source activate "$env_name" 2>/dev/null || conda activate "$env_name"
+    else
+        echo "   Creating new environment: $env_name"
+        conda create -n "$env_name" -y
+        source activate "$env_name" 2>/dev/null || conda activate "$env_name"
+    fi
+    
+    echo "   Installing required packages..."
+    conda install -c bioconda -c conda-forge -y \
+        sra-tools \
+        wget \
+        curl \
+        parallel \
+        gzip
+    
+    echo ""
+    echo "✅ Conda environment set up successfully"
+    echo "💡 To activate this environment:"
+    echo "   conda activate $env_name"
+    
+    return 0
+}
+
+# ==== Manual Installation Instructions ====
+manual_install_instructions() {
+    echo "Manual Installation Instructions"
+    echo "==============================="
+    echo ""
+    echo "SRA Toolkit:"
+    echo "   1. Download from: https://github.com/ncbi/sra-tools/releases"
+    echo "   2. Extract: tar -xzf sratoolkit.*.tar.gz"
+    echo "   3. Add to PATH: export PATH=\$PATH:/path/to/sratoolkit/bin"
+    echo ""
+    echo "Alternative - Direct compilation:"
+    echo "   git clone https://github.com/ncbi/sra-tools.git"
+    echo "   cd sra-tools && make"
+    echo ""
+    echo "Basic tools (if missing):"
+    echo "   wget, curl: Usually pre-installed on most Linux systems"
+    echo "   parallel: Optional but recommended for speed"
+    echo ""
+}
+
+# ==== Test Installation ====
+test_installation() {
+    echo "Testing installation..."
+    
+    local tools=("wget" "curl" "gunzip")
+    local sra_tools=("fasterq-dump" "fastq-dump")
+    local optional_tools=("parallel")
+    
+    local essential_missing=()
+    local sra_missing=true
+    local optional_missing=()
+    
+    # Test essential tools
+    for tool in "${tools[@]}"; do
+        if command -v "$tool" &> /dev/null; then
+            echo "   ✅ $tool: $(which $tool)"
+        else
+            essential_missing+=("$tool")
+            echo "   ❌ $tool: Not found"
+        fi
+    done
+    
+    # Test SRA tools
+    for tool in "${sra_tools[@]}"; do
+        if command -v "$tool" &> /dev/null; then
+            echo "   ✅ $tool: $(which $tool)"
+            sra_missing=false
+        else
+            echo "   ⚠️  $tool: Not found"
+        fi
+    done
+    
+    # Test optional tools
+    for tool in "${optional_tools[@]}"; do
+        if command -v "$tool" &> /dev/null; then
+            echo "   ✅ $tool: $(which $tool)"
+        else
+            optional_missing+=("$tool")
+            echo "   ℹ️  $tool: Not found (optional)"
+        fi
+    done
+    
+    echo ""
+    
+    # Summary
+    if [[ ${#essential_missing[@]} -eq 0 ]]; then
+        echo "✅ Essential tools are available"
+    else
+        echo "❌ Missing essential tools:"
+        printf '   - %s\n' "${essential_missing[@]}"
+        return 1
+    fi
+    
+    if [[ "$sra_missing" == false ]]; then
+        echo "✅ SRA toolkit is available"
+    else
+        echo "⚠️  SRA toolkit not found - will use direct download methods"
+    fi
+    
+    if [[ ${#optional_missing[@]} -eq 0 ]]; then
+        echo "✅ All optional tools are available"
+    else
+        echo "ℹ️  Missing optional tools (will work without them):"
+        printf '   - %s\n' "${optional_missing[@]}"
+    fi
+    
+    return 0
+}
+
+# ==== Create Quick Test Script ====
+create_test_script() {
+    echo ""
+    echo "Creating test script..."
+    
+    cat > test_download.sh << 'EOF'
+#!/bin/bash
+
+# Quick test of download capabilities
+# Tests one small sample to verify everything works
+
+set -euo pipefail
+
+echo "Testing download capability with SRR12182284..."
+
+# Create test directory
+mkdir -p test_download
+cd test_download
+
+# Test SRA toolkit if available
+if command -v fasterq-dump &> /dev/null; then
+    echo "Testing fasterq-dump..."
+    if fasterq-dump SRR12182284 --max-reads 1000 --concatenate-reads; then
+        echo "✅ SRA toolkit working"
+        ls -lh SRR12182284.fastq 2>/dev/null || echo "No output file"
+    fi
+fi
+
+# Test direct download
+echo "Testing direct download from ENA..."
+if wget -t 1 -T 30 "ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR121/084/SRR12182284/SRR12182284.fastq.gz" -O test_download.fastq.gz; then
+    echo "✅ Direct download working"
+    ls -lh test_download.fastq.gz
+else
+    echo "❌ Direct download failed"
+fi
+
+# Cleanup
+cd ..
+rm -rf test_download
+
+echo "Test completed!"
+EOF
+    
+    chmod +x test_download.sh
+    echo "✅ Test script created: test_download.sh"
+    echo "   Run with: ./test_download.sh"
+}
+
+# ==== Main Setup Function ====
+main() {
+    local setup_method
+    
+    if check_environment; then
+        setup_method="hpc"
+    elif [[ $? -eq 1 ]]; then
+        setup_method="conda"
+    else
+        setup_method="manual"
+    fi
+    
+    echo ""
+    
+    case $setup_method in
+        "hpc")
+            if setup_hpc_modules; then
+                echo "✅ HPC setup completed"
+            else
+                echo "❌ HPC setup failed, falling back to manual instructions"
+                manual_install_instructions
+            fi
+            ;;
+        "conda")
+            if setup_conda; then
+                echo "✅ Conda setup completed"
+            else
+                echo "❌ Conda setup failed"
+                manual_install_instructions
+            fi
+            ;;
+        "manual")
+            echo "Manual setup required"
+            manual_install_instructions
+            ;;
+    esac
+    
+    echo ""
+    test_installation
+    
+    echo ""
+    create_test_script
+    
+    echo ""
+    echo "🚀 Next Steps:"
+    echo "============="
+    echo "1. Run test script to verify setup: ./test_download.sh"
+    echo "2. If test passes, run main download script"
+    echo "3. The download script will create the directory structure your pipeline expects"
+    echo ""
+    echo "Pipeline Integration:"
+    echo "   INPUT_DIR=\"./fastq-split_results\"  # This will be created"
+    echo "   # Your existing pipeline should work with this structure"
+}
+
+# Execute main function
+main "$@"module load miniconda3/24.3.0
+conda activate cellranger_atac
+
+###############################################
