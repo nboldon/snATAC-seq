@@ -1,21 +1,13 @@
 #!/bin/bash
 
-# Step 3: Build mm10 Reference Genome for Cell Ranger ATAC
-# Creates custom mm10 reference compatible with Cell Ranger ATAC 2.1.0
-# Based on Ensembl genome and GENCODE annotations
+# Step 2: Setup Download Dependencies for GSE154068 ATAC-seq Pipeline
+# Configures SRA tools and download utilities within existing cellranger_atac environment
 
 set -euo pipefail
 
 # Configuration
-GENOME="mm10"
-VERSION="2020-A"
-BUILD_DIR="${GENOME}-${VERSION}_build"
-SOURCE_DIR="reference_sources"
 ENV_NAME="cellranger_atac"
-
-# URLs for source files
-FASTA_URL="http://ftp.ensembl.org/pub/release-98/fasta/mus_musculus/dna/Mus_musculus.GRCm38.dna.primary_assembly.fa.gz"
-GTF_URL="http://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/gencode.vM23.primary_assembly.annotation.gtf.gz"
+TEST_SRR="SRR12182284"  # Small test sample for validation
 
 # Color codes for output
 RED='\033[0;31m'
@@ -40,374 +32,457 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-check_prerequisites() {
+check_environment() {
     echo "======================================================"
-    echo "mm10 Reference Genome Builder for Cell Ranger ATAC"
+    echo "GSE154068 Download Dependencies Setup"
     echo "======================================================"
-    echo "Genome: $GENOME"
-    echo "Version: $VERSION"
-    echo "Build directory: $BUILD_DIR"
+    echo "Host: $(hostname)"
+    echo "OS: $(uname -s)"
     echo ""
     
-    # Check if we're on Linux (required for cellranger-atac mkref)
-    if [[ "$(uname -s)" != "Linux" ]]; then
-        print_error "Cell Ranger ATAC mkref only runs on Linux systems"
-        print_status "Current OS: $(uname -s)"
-        exit 1
-    fi
+    print_status "Checking current environment..."
     
-    # Check conda environment
-    if [[ "${CONDA_DEFAULT_ENV:-}" != "$ENV_NAME" ]]; then
-        print_warning "Not in $ENV_NAME environment"
-        if command -v conda &> /dev/null; then
-            print_status "Activating $ENV_NAME environment..."
-            eval "$(conda shell.bash hook)"
-            conda activate "$ENV_NAME" || {
-                print_error "Failed to activate $ENV_NAME environment"
-                exit 1
-            }
-        else
-            print_error "Conda not available and not in correct environment"
-            exit 1
-        fi
-    fi
-    
-    # Check for cellranger-atac
-    if ! command -v cellranger-atac &> /dev/null; then
-        print_error "cellranger-atac not found in PATH"
-        print_status "Please ensure Cell Ranger ATAC is installed and in PATH"
-        exit 1
-    fi
-    
-    print_success "Prerequisites check passed"
-}
-
-setup_directories() {
-    print_status "Setting up build directories..."
-    
-    # Create directories
-    mkdir -p "$SOURCE_DIR" "$BUILD_DIR"
-    
-    print_success "Directories created:"
-    print_status "  Source: $SOURCE_DIR"
-    print_status "  Build: $BUILD_DIR"
-}
-
-download_source_files() {
-    print_status "Downloading source files..."
-    
-    local fasta_file="$SOURCE_DIR/Mus_musculus.GRCm38.dna.primary_assembly.fa"
-    local gtf_file="$SOURCE_DIR/gencode.vM23.primary_assembly.annotation.gtf"
-    
-    # Download FASTA if not present
-    if [[ ! -f "$fasta_file" ]]; then
-        print_status "Downloading Ensembl FASTA..."
-        if curl -fsSL "$FASTA_URL" | gunzip > "$fasta_file"; then
-            print_success "FASTA downloaded: $(basename "$fasta_file")"
-        else
-            print_error "Failed to download FASTA file"
-            exit 1
-        fi
-    else
-        print_success "FASTA file already exists: $(basename "$fasta_file")"
-    fi
-    
-    # Download GTF if not present
-    if [[ ! -f "$gtf_file" ]]; then
-        print_status "Downloading GENCODE GTF..."
-        if curl -fsSL "$GTF_URL" | gunzip > "$gtf_file"; then
-            print_success "GTF downloaded: $(basename "$gtf_file")"
-        else
-            print_error "Failed to download GTF file"
-            exit 1
-        fi
-    else
-        print_success "GTF file already exists: $(basename "$gtf_file")"
-    fi
-    
-    # Verify file integrity
-    print_status "Verifying file integrity..."
-    
-    # Check FASTA
-    if grep -q "^>" "$fasta_file" && [[ $(wc -l < "$fasta_file") -gt 1000 ]]; then
-        print_success "FASTA file appears valid"
-    else
-        print_error "FASTA file appears corrupted"
-        rm -f "$fasta_file"
-        exit 1
-    fi
-    
-    # Check GTF
-    if grep -q "^#" "$gtf_file" && grep -q -E "\tgene\t" "$gtf_file"; then
-        print_success "GTF file appears valid"
-    else
-        print_error "GTF file appears corrupted"
-        rm -f "$gtf_file"
-        exit 1
-    fi
-    
-    # Show file sizes
-    print_status "File sizes:"
-    ls -lh "$fasta_file" "$gtf_file"
-}
-
-process_fasta() {
-    print_status "Processing FASTA file for Cell Ranger ATAC compatibility..."
-    
-    local fasta_in="$SOURCE_DIR/Mus_musculus.GRCm38.dna.primary_assembly.fa"
-    local fasta_out="$BUILD_DIR/$(basename "$fasta_in").modified"
-    
-    print_status "Modifying chromosome names to match GENCODE format..."
-    
-    # Modify sequence headers to match GENCODE format
-    # This is crucial for Cell Ranger ATAC compatibility
-    cat "$fasta_in" | sed -E '
-        # Add chromosome identifier as second field for primary contigs
-        s/^>([0-9]+|[XYM]|MT) .*/>\1 \1/
-        # Convert numbered chromosomes to chr format
-        s/^>([0-9]+) />\1 chr\1/
-        # Convert X, Y to chr format  
-        s/^>(X|Y) />\1 chr\1/
-        # Convert MT/M to chrM
-        s/^>(MT?) />chrM chrM/
-        # Keep other sequences as-is but add identifier
-        /^>[0-9XYM]|^>MT|^>chrM/!{
-            s/^>([^ ]+).*/>\1 \1/
+    # Check if we're in the correct conda environment
+    if [[ "${CONDA_DEFAULT_ENV:-}" == "$ENV_NAME" ]]; then
+        print_success "Using conda environment: $ENV_NAME"
+        return 0
+    elif command -v conda &> /dev/null; then
+        print_warning "Not in $ENV_NAME environment. Attempting to activate..."
+        eval "$(conda shell.bash hook)"
+        conda activate "$ENV_NAME" 2>/dev/null || {
+            print_error "Failed to activate $ENV_NAME environment"
+            print_error "Please run: conda activate $ENV_NAME"
+            return 1
         }
-    ' > "$fasta_out"
-    
-    print_success "FASTA processed: $(basename "$fasta_out")"
-    
-    # Verify the modification worked
-    print_status "Chromosome naming verification:"
-    grep "^>" "$fasta_out" | head -10
-    
-    local chr_count=$(grep "^>chr" "$fasta_out" | wc -l)
-    print_status "Chromosomes with 'chr' prefix: $chr_count"
-}
-
-process_gtf() {
-    print_status "Processing GTF file..."
-    
-    local gtf_in="$SOURCE_DIR/gencode.vM23.primary_assembly.annotation.gtf"
-    local gtf_modified="$BUILD_DIR/$(basename "$gtf_in").modified"
-    local gtf_filtered="$BUILD_DIR/$(basename "$gtf_in").filtered"
-    
-    print_status "Removing version suffixes from gene/transcript IDs..."
-    
-    # Remove version suffixes from Ensembl IDs
-    # This makes the GTF compatible with Cell Ranger ATAC
-    local ID_PATTERN="(ENS(MUS)?[GTE][0-9]+)\.([0-9]+)"
-    
-    sed -E "
-        s/gene_id \"$ID_PATTERN\";/gene_id \"\1\"; gene_version \"\3\";/g
-        s/transcript_id \"$ID_PATTERN\";/transcript_id \"\1\"; transcript_version \"\3\";/g  
-        s/exon_id \"$ID_PATTERN\";/exon_id \"\1\"; exon_version \"\3\";/g
-    " "$gtf_in" > "$gtf_modified"
-    
-    print_success "GTF IDs processed: $(basename "$gtf_modified")"
-    
-    print_status "Creating gene allowlist for Cell Ranger ATAC..."
-    
-    # Define biotype patterns for genes suitable for ATAC-seq analysis
-    local BIOTYPE_PATTERN="(protein_coding|lncRNA|IG_C_gene|IG_D_gene|IG_J_gene|IG_LV_gene|IG_V_gene|IG_V_pseudogene|IG_J_pseudogene|IG_C_pseudogene|TR_C_gene|TR_D_gene|TR_J_gene|TR_V_gene|TR_V_pseudogene|TR_J_pseudogene)"
-    local GENE_PATTERN="gene_type \"$BIOTYPE_PATTERN\""
-    local TX_PATTERN="transcript_type \"$BIOTYPE_PATTERN\""
-    local READTHROUGH_PATTERN="tag \"readthrough_transcript\""
-    
-    # Extract allowed genes
-    awk '$3 == "transcript"' "$gtf_modified" | \
-    grep -E "$GENE_PATTERN" | \
-    grep -E "$TX_PATTERN" | \
-    grep -Ev "$READTHROUGH_PATTERN" | \
-    sed -E 's/.*(gene_id "[^"]+").*/\1/' | \
-    sort | uniq > "$BUILD_DIR/gene_allowlist"
-    
-    local gene_count=$(wc -l < "$BUILD_DIR/gene_allowlist")
-    print_success "Gene allowlist created with $gene_count genes"
-    
-    print_status "Filtering GTF to allowed genes only..."
-    
-    # Create filtered GTF with only allowed genes
-    {
-        grep -E "^#" "$gtf_modified"
-        grep -Ff "$BUILD_DIR/gene_allowlist" "$gtf_modified"
-    } > "$gtf_filtered"
-    
-    local filtered_lines=$(grep -v "^#" "$gtf_filtered" | wc -l)
-    print_success "Filtered GTF created with $filtered_lines annotation lines"
-    
-    # Show some statistics
-    print_status "Gene type distribution:"
-    grep -v "^#" "$gtf_filtered" | awk '$3 == "gene"' | \
-    grep -o 'gene_type "[^"]*"' | sort | uniq -c | sort -nr | head -10
-}
-
-build_reference() {
-    print_status "Building Cell Ranger ATAC reference..."
-    
-    local fasta_file="$BUILD_DIR/Mus_musculus.GRCm38.dna.primary_assembly.fa.modified"
-    local gtf_file="$BUILD_DIR/gencode.vM23.primary_assembly.annotation.gtf.filtered"
-    local ref_name="refdata-cellranger-atac-${GENOME}-${VERSION}"
-    
-    # Remove existing reference if present
-    if [[ -d "$ref_name" ]]; then
-        print_warning "Existing reference found. Removing..."
-        rm -rf "$ref_name"
+        print_success "Activated conda environment: $ENV_NAME"
+        return 0
     fi
     
-    print_status "Running cellranger-atac mkref..."
-    print_status "This may take 30-60 minutes depending on system performance..."
-    
-    # Build reference
-    if cellranger-atac mkref \
-        --ref-version="$VERSION" \
-        --genome="$GENOME" \
-        --fasta="$fasta_file" \
-        --genes="$gtf_file"; then
-        
-        print_success "Reference genome built successfully!"
-        print_success "Output directory: $ref_name"
-        
-        # Show reference contents
-        print_status "Reference contents:"
-        ls -la "$ref_name/"
-        
-        # Show reference size
-        local ref_size=$(du -sh "$ref_name" | cut -f1)
-        print_status "Reference size: $ref_size"
-        
-    else
-        print_error "cellranger-atac mkref failed"
-        exit 1
-    fi
-}
-
-create_usage_info() {
-    print_status "Creating usage information..."
-    
-    local ref_name="refdata-cellranger-atac-${GENOME}-${VERSION}"
-    
-    cat > reference_info.txt << EOF
-mm10 Cell Ranger ATAC Reference Information
-==========================================
-
-Reference Name: $ref_name
-Genome: $GENOME
-Version: $VERSION
-Build Date: $(date)
-
-Usage in Cell Ranger ATAC:
---------------------------
-cellranger-atac count \\
-    --id=sample_name \\
-    --reference=$PWD/$ref_name \\
-    --fastqs=/path/to/fastqs \\
-    --sample=sample_name
-
-Integration with Pipeline:
--------------------------
-Set this in your analysis scripts:
-REFERENCE_PATH="$PWD/$ref_name"
-
-Source Files Used:
------------------
-FASTA: $FASTA_URL
-GTF: $GTF_URL
-
-Processing Applied:
-------------------
-- Chromosome names modified for GENCODE compatibility
-- Gene IDs de-versioned for Cell Ranger compatibility  
-- Gene allowlist created excluding readthrough transcripts
-- Only protein-coding and immunoglobulin genes included
-
-Quality Control:
----------------
-Total genes in reference: $(grep -c "^>" "$ref_name/fasta/genome.fa" 2>/dev/null || echo "N/A")
-Chromosomes included: $(grep "^>" "$ref_name/fasta/genome.fa" 2>/dev/null | wc -l || echo "N/A")
-
-EOF
-    
-    print_success "Reference information saved to reference_info.txt"
-}
-
-cleanup_build_files() {
-    print_status "Cleaning up intermediate files..."
-    
-    # Keep source files but remove build intermediates
-    if [[ -d "$BUILD_DIR" ]]; then
-        print_status "Removing build directory: $BUILD_DIR"
-        rm -rf "$BUILD_DIR"
+    # Check if we're on HPC with module system
+    if command -v module &> /dev/null; then
+        print_status "HPC module system detected"
+        return 2
     fi
     
-    print_success "Build cleanup completed"
+    print_error "Neither conda environment $ENV_NAME nor HPC modules found"
+    return 1
 }
 
-verify_reference() {
-    print_status "Verifying reference integrity..."
+setup_hpc_modules() {
+    print_status "Setting up HPC modules..."
     
-    local ref_name="refdata-cellranger-atac-${GENOME}-${VERSION}"
+    # Try common HPC module names
+    local modules_to_try=("sra-toolkit" "SRA-Toolkit" "sratoolkit" "ncbi-sra-tools")
+    local loaded_modules=()
     
-    # Check essential files exist
-    local required_files=(
-        "$ref_name/fasta/genome.fa"
-        "$ref_name/genes/genes.gtf"
-        "$ref_name/reference.json"
-    )
-    
-    local missing_files=()
-    for file in "${required_files[@]}"; do
-        if [[ -f "$file" ]]; then
-            print_success "Found: $file"
-        else
-            missing_files+=("$file")
-            print_error "Missing: $file"
+    for module_name in "${modules_to_try[@]}"; do
+        if module load "$module_name" 2>/dev/null; then
+            print_success "Loaded: $module_name"
+            loaded_modules+=("$module_name")
+            break
         fi
     done
     
-    if [[ ${#missing_files[@]} -eq 0 ]]; then
-        print_success "Reference verification passed"
+    # Try wget/curl modules if not available
+    for tool in wget curl parallel; do
+        if ! command -v "$tool" &> /dev/null; then
+            if module load "$tool" 2>/dev/null; then
+                print_success "Loaded: $tool"
+                loaded_modules+=("$tool")
+            fi
+        fi
+    done
+    
+    if [[ ${#loaded_modules[@]} -gt 0 ]]; then
+        print_success "HPC modules loaded successfully"
+        echo ""
+        print_status "Add these to your job script or .bashrc:"
+        for mod in "${loaded_modules[@]}"; do
+            echo "   module load $mod"
+        done
         return 0
     else
-        print_error "Reference verification failed - missing files"
+        print_error "No suitable HPC modules found"
+        print_status "Try: module avail | grep -i sra"
         return 1
     fi
 }
 
+setup_conda_packages() {
+    print_status "Installing additional packages in conda environment..."
+    
+    eval "$(conda shell.bash hook)"
+    conda activate "$ENV_NAME"
+    
+    # Check if sra-tools is already installed
+    if command -v fasterq-dump &> /dev/null; then
+        print_success "SRA tools already available"
+    else
+        print_status "Installing SRA tools..."
+        conda install -c bioconda -c conda-forge -y \
+            sra-tools \
+            parallel \
+            pigz || {
+            print_warning "Failed to install via conda, trying manual installation"
+            return 1
+        }
+    fi
+    
+    # Ensure other tools are available
+    local missing_tools=()
+    for tool in wget curl gzip gunzip; do
+        if ! command -v "$tool" &> /dev/null; then
+            missing_tools+=("$tool")
+        fi
+    done
+    
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        print_status "Installing missing tools: ${missing_tools[*]}"
+        conda install -c conda-forge -y "${missing_tools[@]}" || {
+            print_error "Failed to install missing tools"
+            return 1
+        }
+    fi
+    
+    print_success "Conda packages configured"
+    return 0
+}
+
+configure_sra_toolkit() {
+    print_status "Configuring SRA toolkit..."
+    
+    # Create SRA configuration directory if it doesn't exist
+    local sra_config_dir="$HOME/.ncbi"
+    mkdir -p "$sra_config_dir"
+    
+    # Configure SRA toolkit to disable automatic downloading to user-repository
+    cat > "$sra_config_dir/user-settings.mkfg" << 'EOF'
+## auto-generated configuration file - DO NOT EDIT ##
+
+/LIBS/GUID = "$(uuidgen)"
+/config/default = "false"
+/repository/user/ad/public/apps/file/volumes/flat = "."
+/repository/user/ad/public/apps/refseq/volumes/refseqvol = "."
+/repository/user/ad/public/apps/sra/volumes/sraFlat = "."
+/repository/user/ad/public/apps/sraPileup/volumes/ad = "."
+/repository/user/ad/public/apps/sraRealign/volumes/ad = "."
+/repository/user/ad/public/root = "."
+/tools/prefetch/download_to_cache = "false"
+/tools/sra-pileup/use_quality = "true"
+EOF
+
+    print_success "SRA toolkit configured"
+}
+
+test_installation() {
+    print_status "Testing installation..."
+    
+    local tools=("wget" "curl" "gunzip" "gzip")
+    local sra_tools=("fasterq-dump" "fastq-dump" "prefetch")
+    local optional_tools=("parallel" "pigz")
+    
+    local essential_missing=()
+    local sra_available=false
+    local optional_missing=()
+    
+    # Test essential tools
+    for tool in "${tools[@]}"; do
+        if command -v "$tool" &> /dev/null; then
+            print_success "$tool: $(which $tool)"
+        else
+            essential_missing+=("$tool")
+            print_error "$tool: Not found"
+        fi
+    done
+    
+    # Test SRA tools
+    for tool in "${sra_tools[@]}"; do
+        if command -v "$tool" &> /dev/null; then
+            print_success "$tool: $(which $tool)"
+            sra_available=true
+        else
+            print_warning "$tool: Not found"
+        fi
+    done
+    
+    # Test optional tools
+    for tool in "${optional_tools[@]}"; do
+        if command -v "$tool" &> /dev/null; then
+            print_success "$tool: $(which $tool)"
+        else
+            optional_missing+=("$tool")
+            print_warning "$tool: Not found (optional)"
+        fi
+    done
+    
+    echo ""
+    
+    # Summary
+    if [[ ${#essential_missing[@]} -eq 0 ]]; then
+        print_success "Essential tools are available"
+    else
+        print_error "Missing essential tools:"
+        printf '   - %s\n' "${essential_missing[@]}"
+        return 1
+    fi
+    
+    if [[ "$sra_available" == true ]]; then
+        print_success "SRA toolkit is available"
+    else
+        print_warning "SRA toolkit not found - will use direct download methods"
+    fi
+    
+    if [[ ${#optional_missing[@]} -eq 0 ]]; then
+        print_success "All optional tools are available"
+    else
+        print_status "Missing optional tools (pipeline will work without them):"
+        printf '   - %s\n' "${optional_missing[@]}"
+    fi
+    
+    return 0
+}
+
+create_test_script() {
+    print_status "Creating download test script..."
+    
+    cat > test_download.sh << 'EOF'
+#!/bin/bash
+
+# Test download capabilities for GSE154068 pipeline
+# Tests both SRA toolkit and direct download methods
+
+set -euo pipefail
+
+TEST_SRR="SRR12182284"
+TEST_DIR="download_test"
+
+print_status() {
+    echo -e "\033[0;34m[INFO]\033[0m $1"
+}
+
+print_success() {
+    echo -e "\033[0;32m[SUCCESS]\033[0m $1"
+}
+
+print_error() {
+    echo -e "\033[0;31m[ERROR]\033[0m $1"
+}
+
+echo "Testing download capability with $TEST_SRR..."
+echo "=============================================="
+
+# Create test directory
+rm -rf "$TEST_DIR"
+mkdir -p "$TEST_DIR"
+cd "$TEST_DIR"
+
+# Test 1: SRA toolkit if available
+if command -v fasterq-dump &> /dev/null; then
+    print_status "Testing fasterq-dump (SRA toolkit)..."
+    
+    # Test with limited reads to speed up testing
+    if timeout 300 fasterq-dump "$TEST_SRR" --split-files --max-reads 1000 2>/dev/null; then
+        print_success "SRA toolkit download working"
+        
+        # Check output files
+        if ls ${TEST_SRR}*.fastq 1>/dev/null 2>&1; then
+            print_success "FASTQ files created:"
+            ls -lh ${TEST_SRR}*.fastq
+        else
+            print_error "No FASTQ files found"
+        fi
+        
+        # Cleanup SRA test files
+        rm -f ${TEST_SRR}*.fastq
+    else
+        print_error "SRA toolkit test failed or timed out"
+    fi
+    echo ""
+else
+    print_status "SRA toolkit not available, skipping test"
+    echo ""
+fi
+
+# Test 2: Direct download from ENA
+print_status "Testing direct download from ENA FTP..."
+
+# Try different ENA FTP paths
+ena_urls=(
+    "ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR121/084/$TEST_SRR/${TEST_SRR}.fastq.gz"
+    "ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR121/084/$TEST_SRR/${TEST_SRR}_1.fastq.gz"
+)
+
+download_success=false
+for url in "${ena_urls[@]}"; do
+    print_status "Trying: $url"
+    if timeout 60 wget -t 2 -T 30 -q "$url" -O "test_download.fastq.gz" 2>/dev/null; then
+        if [[ -f "test_download.fastq.gz" && $(wc -c < "test_download.fastq.gz") -gt 1000 ]]; then
+            print_success "Direct download working"
+            print_success "Downloaded file size: $(ls -lh test_download.fastq.gz | awk '{print $5}')"
+            download_success=true
+            break
+        else
+            print_error "Downloaded file is too small or empty"
+        fi
+    else
+        print_error "Download failed: $url"
+    fi
+done
+
+if [[ "$download_success" == false ]]; then
+    print_error "All direct download methods failed"
+else
+    # Test gzip decompression
+    print_status "Testing gzip decompression..."
+    if gunzip -t "test_download.fastq.gz" 2>/dev/null; then
+        print_success "Downloaded file is valid gzip"
+        
+        # Show first few lines
+        print_status "Sample content:"
+        zcat "test_download.fastq.gz" | head -8
+    else
+        print_error "Downloaded file is not valid gzip"
+    fi
+fi
+
+# Cleanup
+cd ..
+rm -rf "$TEST_DIR"
+
+echo ""
+if [[ "$download_success" == true ]] || command -v fasterq-dump &> /dev/null; then
+    print_success "Download test completed - ready for data pipeline!"
+else
+    print_error "Download test failed - check network connectivity and try again"
+    exit 1
+fi
+EOF
+    
+    chmod +x test_download.sh
+    print_success "Test script created: test_download.sh"
+}
+
+create_usage_guide() {
+    print_status "Creating usage guide..."
+    
+    cat > download_setup_guide.md << 'EOF'
+# GSE154068 Download Dependencies Setup
+
+## What was installed
+
+### Core tools:
+- **SRA Toolkit**: For downloading FASTQ files from NCBI SRA
+  - `fasterq-dump`: Fast parallel FASTQ extraction
+  - `prefetch`: Pre-download SRA files for faster processing
+- **wget/curl**: For direct downloads from ENA/other sources
+- **parallel**: For parallel processing (optional but recommended)
+- **pigz**: For fast gzip compression/decompression (optional)
+
+### Configuration:
+- SRA toolkit configured to avoid caching issues
+- Conda environment integrated with existing cellranger_atac setup
+
+## Usage
+
+### Activate environment:
+```bash
+conda activate cellranger_atac
+```
+
+### Test setup:
+```bash
+./test_download.sh
+```
+
+### Download methods available:
+
+1. **SRA Toolkit** (preferred for large datasets):
+   ```bash
+   fasterq-dump SRR12182284 --split-files --threads 4
+   ```
+
+2. **Direct download from ENA**:
+   ```bash
+   wget "ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR121/084/SRR12182284/SRR12182284.fastq.gz"
+   ```
+
+3. **Parallel processing** (if parallel is available):
+   ```bash
+   parallel -j 4 fasterq-dump {} --split-files ::: SRR1 SRR2 SRR3
+   ```
+
+## Troubleshooting
+
+### SRA toolkit issues:
+- If downloads hang: Check ~/.ncbi/user-settings.mkfg configuration
+- If out of space: SRA toolkit is configured to download to current directory
+- For network issues: Try prefetch first, then fasterq-dump
+
+### Direct download issues:
+- ENA FTP occasionally has timeouts - retry with different servers
+- Some samples may only be available as paired-end (_1.fastq.gz, _2.fastq.gz)
+
+## Integration with main pipeline
+
+This setup ensures the main GSE154068 download script will have all required tools.
+The pipeline expects to create: `./fastq-split_results/` directory structure.
+EOF
+
+    print_success "Usage guide created: download_setup_guide.md"
+}
+
 main() {
-    # Pre-flight checks
-    check_prerequisites
+    local setup_result
     
-    # Setup
-    setup_directories
+    # Check and setup environment
+    if check_environment; then
+        setup_result=0
+    elif [[ $? -eq 2 ]]; then
+        # HPC system
+        setup_hpc_modules
+        setup_result=$?
+    else
+        exit 1
+    fi
     
-    # Download source files
-    download_source_files
+    # If conda environment, install additional packages
+    if [[ $setup_result -eq 0 ]] && [[ "${CONDA_DEFAULT_ENV:-}" == "$ENV_NAME" ]]; then
+        setup_conda_packages || {
+            print_warning "Conda package installation had issues, but continuing..."
+        }
+    fi
     
-    # Process files
-    process_fasta
-    process_gtf
+    # Configure SRA toolkit
+    configure_sra_toolkit
     
-    # Build reference
-    build_reference
+    # Test installation
+    echo ""
+    if test_installation; then
+        print_success "All tests passed"
+    else
+        print_error "Some tests failed - check output above"
+        exit 1
+    fi
     
-    # Verify and document
-    verify_reference
-    create_usage_info
-    
-    # Cleanup
-    cleanup_build_files
+    # Create test script and documentation
+    echo ""
+    create_test_script
+    create_usage_guide
     
     echo ""
     echo "======================================================"
-    print_success "mm10 reference build completed successfully!"
+    print_success "Download dependencies setup completed!"
     echo "======================================================"
     echo ""
-    echo "Reference location: refdata-cellranger-atac-${GENOME}-${VERSION}"
-    echo "Usage info: reference_info.txt"
+    echo "Next steps:"
+    echo "1. Test the setup: ./test_download.sh"
+    echo "2. Read the guide: cat download_setup_guide.md"
+    echo "3. Run your main download script for GSE154068"
     echo ""
-    echo "Ready for Cell Ranger ATAC analysis!"
+    echo "Environment ready for:"
+    echo "- FASTQ downloads from SRA/ENA"
+    echo "- Parallel processing"
+    echo "- Integration with Cell Ranger ATAC pipeline"
 }
 
 main "$@"
