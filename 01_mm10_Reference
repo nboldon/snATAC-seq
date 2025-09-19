@@ -74,9 +74,34 @@ check_prerequisites() {
     
     # Check for cellranger-atac
     if ! command -v cellranger-atac &> /dev/null; then
-        print_error "cellranger-atac not found in PATH"
-        print_status "Please ensure Cell Ranger ATAC is installed and in PATH"
-        exit 1
+        print_warning "cellranger-atac not found in PATH"
+        
+        # Try common installation locations
+        local possible_paths=(
+            "$HOME/tools/cellranger-atac-2.1.0"
+            "/opt/cellranger-atac-2.1.0"
+            "/usr/local/cellranger-atac-2.1.0"
+        )
+        
+        local found_path=""
+        for path in "${possible_paths[@]}"; do
+            if [[ -f "$path/cellranger-atac" ]]; then
+                found_path="$path"
+                break
+            fi
+        done
+        
+        if [[ -n "$found_path" ]]; then
+            print_status "Found Cell Ranger ATAC at: $found_path"
+            export PATH="$found_path:$PATH"
+            print_success "Added Cell Ranger ATAC to PATH for this session"
+        else
+            print_error "cellranger-atac not found in common locations"
+            print_status "Please ensure Cell Ranger ATAC is installed and either:"
+            print_status "1. Add it to PATH: export PATH=/path/to/cellranger-atac:\$PATH"
+            print_status "2. Or install it using Step 1 script"
+            exit 1
+        fi
     fi
     
     print_success "Prerequisites check passed"
