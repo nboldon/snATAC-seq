@@ -1,0 +1,257 @@
+## Download 10x datasets of interest
+
+############
+
+
+## Ensure that Cell Ranger ATAC is added to your PATH:
+ 
+# Add cellranger-atac to your PATH for this session
+export PATH=/home/nboldon/tools/cellranger-atac-2.1.0:$PATH
+
+# Test that it's now accessible
+cellranger-atac --help
+
+
+############
+
+
+bash
+
+# Navigate to your data directory
+cd ~/protocol_paper/orig_data
+
+# Dataset 1: Fresh cortex v1.1.0
+wget https://cf.10xgenomics.com/samples/cell-atac/1.1.0/atac_v1_adult_brain_fresh_5k/atac_v1_adult_brain_fresh_5k_fastqs.tar
+
+# Dataset 2: 8K cortex ATAC v1.1
+wget https://s3-us-west-2.amazonaws.com/10x.files/samples/cell-atac/2.1.0/8k_mouse_cortex_ATACv1p1_nextgem_Chromium_X/8k_mouse_cortex_ATACv1p1_nextgem_Chromium_X_fastqs.tar
+
+# Dataset 3: 8K cortex ATAC v2 (Chromium X)
+wget https://s3-us-west-2.amazonaws.com/10x.files/samples/cell-atac/2.1.0/8k_mouse_cortex_ATACv2_nextgem_Chromium_X/8k_mouse_cortex_ATACv2_nextgem_Chromium_X_fastqs.tar
+
+# Dataset 4: 8K cortex ATAC v2 (Controller)
+wget https://s3-us-west-2.amazonaws.com/10x.files/samples/cell-atac/2.1.0/8k_mouse_cortex_ATACv2_nextgem_Chromium_Controller/8k_mouse_cortex_ATACv2_nextgem_Chromium_Controller_fastqs.tar
+
+
+####################
+
+
+## Extract the files individually
+
+# Extract Dataset 1: Fresh cortex v1.1.0
+tar -xf atac_v1_adult_brain_fresh_5k_fastqs.tar
+
+# Extract Dataset 2: 8K cortex ATAC v1.1
+tar -xf 8k_mouse_cortex_ATACv1p1_nextgem_Chromium_X_fastqs.tar
+
+# Extract Dataset 3: 8K cortex ATAC v2 (Chromium X)
+tar -xf 8k_mouse_cortex_ATACv2_nextgem_Chromium_X_fastqs.tar
+
+# Extract Dataset 4: 8K cortex ATAC v2 (Controller)
+tar -xf 8k_mouse_cortex_ATACv2_nextgem_Chromium_Controller_fastqs.tar
+
+
+########
+
+
+# List all directories and files
+ls -la
+
+# Check the structure of one dataset
+ls -la atac_v1_adult_brain_fresh_5k_fastqs/
+
+
+########
+
+
+## Verify preprocessing quality control
+
+# Navigate to the fastq_files directory
+cd fastq_files
+
+# Now run FastQC on the files
+fastqc atac_v1_adult_brain_fresh_5k_S1_L001_R1_001.fastq.gz
+
+# Or run FastQC on all FASTQ files in the directory
+fastqc *.fastq.gz
+
+# Generate a MultiQC report to summarize all samples
+multiqc .
+
+
+
+#######################################################
+
+
+## Organize files by sample directories
+
+# Cell Ranger ATAC expects individual directories that contain all FASTQ files for a single sample. 
+# When multiple lanes were used for a sample, Cell Ranger automatically merges them during processing. 
+
+bash
+
+# Create sample-specific directories
+mkdir -p adult_brain_5k_v1 cortex_8k_v1.1 cortex_8k_v2_chromiumx cortex_8k_v2_controller
+
+# Move files to appropriate directories
+mv atac_v1_adult_brain_fresh_5k_S1_* adult_brain_5k_v1/
+mv 8k_mouse_cortex_ATACv1-1_nextgem_Chromium_X_S4_* cortex_8k_v1.1/
+mv 8k_mouse_cortex_ATACv2_nextgem_Chromium_X_S5_* cortex_8k_v2_chromiumx/
+mv 8k_mouse_cortex_ATACv2_nextgem_Chromium_Controller_S6_* cortex_8k_v2_controller/
+
+
+#######################################################
+
+
+bash
+
+## Build the mm10 reference genome
+# This step may take 60+ minutes to complete
+
+
+# Create a references directory in your home folder
+mkdir -p ./mm10_reference
+cd ./mm10_reference
+
+
+# Save the build_mm10_reference.sh script to a file 
+
+bash
+
+# Make the script executable and run it
+chmod +x build_mm10_reference.sh
+./build_mm10_reference.sh
+
+
+
+## If that fails: 
+
+# Add cellranger-atac to your conda environment's PATH permanently
+conda env config vars set PATH="/home/nboldon/tools/cellranger-atac-2.1.0:$PATH" -n cellranger_atac
+
+# Reactivate the environment to load the new PATH
+conda deactivate
+conda activate cellranger_atac
+
+# Test that cellranger-atac is now accessible
+which cellranger-atac
+cellranger-atac --help
+
+
+
+## Cell Ranger ATAC mkref requires a configuration file approach; a config file is required. 
+
+bash
+
+# Create a configuration file for mkref
+cat > mm10_config.txt << 'EOF'
+{
+    "organism": "Mus musculus",
+    "genome": ["mm10"],
+    "input_fasta": ["mm10-2020-A_build/Mus_musculus.GRCm38.dna.primary_assembly.fa.modified"],
+    "input_gtf": ["mm10-2020-A_build/gencode.vM23.primary_assembly.annotation.gtf.filtered"]
+}
+EOF
+
+
+# Now run mkref with the config file
+cellranger-atac mkref --config=mm10_config.txt
+
+
+
+#######################################################
+
+## Cell Ranger ATAC Preprocessing
+
+# NOTE: These steps may take several hours per sample, depending on your computing capabillities. 
+
+bash
+
+# Sample 1
+cellranger-atac count \
+  --id=adult_brain_5k_v1 \
+  --reference=./mm10_reference/mm10 \
+  --fastqs=fastq_files/adult_brain_5k_v1 \
+  --sample=atac_v1_adult_brain_fresh_5k
+
+# Sample 2  
+cellranger-atac count \
+  --id=cortex_8k_v1-1 \
+  --reference=./mm10_reference/mm10 \
+  --fastqs=fastq_files/cortex_8k_v1-1 \
+  --sample=8k_mouse_cortex_ATACv1-1_nextgem_Chromium_X
+
+# Sample 3
+cellranger-atac count \
+  --id=cortex_8k_v2_chromiumx \
+  --reference=./mm10_reference/mm10 \
+  --fastqs=fastq_files/cortex_8k_v2_chromiumx \
+  --sample=8k_mouse_cortex_ATACv2_nextgem_Chromium_X
+
+# Sample 4
+cellranger-atac count \
+  --id=cortex_8k_v2_controller \
+  --reference=./mm10_reference/mm10 \
+  --fastqs=fastq_files/cortex_8k_v2_controller \
+  --sample=8k_mouse_cortex_ATACv2_nextgem_Chromium_Controller
+
+
+# This creates: fragments.tsv.gz, peaks.bed, etc.
+
+
+####################################################
+
+
+## Rename and copy fragment files to new folder
+
+
+bash
+
+# Create a new directory for organized fragment files
+mkdir -p fragments_for_analysis
+
+
+# Copy both fragment files and their indices
+cp adult_brain_5k_v1/outs/fragments.tsv.gz fragments_for_analysis/adult_brain_5k_v1_fragments.tsv.gz
+cp adult_brain_5k_v1/outs/fragments.tsv.gz.tbi fragments_for_analysis/adult_brain_5k_v1_fragments.tsv.gz.tbi
+
+cp cortex_8k_v1-1/outs/fragments.tsv.gz fragments_for_analysis/cortex_8k_v1-1_fragments.tsv.gz
+cp cortex_8k_v1-1/outs/fragments.tsv.gz.tbi fragments_for_analysis/cortex_8k_v1-1_fragments.tsv.gz.tbi
+
+cp cortex_8k_v2_chromiumx/outs/fragments.tsv.gz fragments_for_analysis/cortex_8k_v2_chromiumx_fragments.tsv.gz
+cp cortex_8k_v2_chromiumx/outs/fragments.tsv.gz.tbi fragments_for_analysis/cortex_8k_v2_chromiumx_fragments.tsv.gz.tbi
+
+cp cortex_8k_v2_controller/outs/fragments.tsv.gz fragments_for_analysis/cortex_8k_v2_controller_fragments.tsv.gz
+cp cortex_8k_v2_controller/outs/fragments.tsv.gz.tbi fragments_for_analysis/cortex_8k_v2_controller_fragments.tsv.gz.tbi
+
+
+
+# Copy singlecell.csv files for cell metadata
+cp adult_brain_5k_v1/outs/singlecell.csv fragments_for_analysis/adult_brain_5k_v1_singlecell.csv
+cp cortex_8k_v1-1/outs/singlecell.csv fragments_for_analysis/cortex_8k_v1-1_singlecell.csv
+cp cortex_8k_v2_chromiumx/outs/singlecell.csv fragments_for_analysis/cortex_8k_v2_chromiumx_singlecell.csv
+cp cortex_8k_v2_controller/outs/singlecell.csv fragments_for_analysis/cortex_8k_v2_controller_singlecell.csv
+
+
+
+# Verify the files were copied
+ls -la fragments_for_analysis/
+
+
+
+#######################################################
+
+r
+
+# 2. ArchR analysis in R
+library(ArchR)
+
+# Import Cell Ranger ATAC output
+ArrowFiles <- createArrowFiles(
+  inputFiles = "mouse_cortex_v2/outs/fragments.tsv.gz",
+  sampleNames = "cortex_v2",
+  minTSS = 4,
+  minFrags = 1000
+)
+
+# Continue with ArchR analysis...
