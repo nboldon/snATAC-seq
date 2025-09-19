@@ -1,1 +1,199 @@
 # Setup conda environment
+
+
+## Cell Ranger ATAC will only run on Linux systems. 
+# If you operate in a macos or other system platform, you will need to complete several of the analysis steps using a Linux os. 
+
+
+
+##############################################
+
+
+## Create New Cell Ranger ATAC Environment
+
+
+## The following code is for macos systems; but Cell Ranger ATAC doesn't run on macos
+
+bash
+
+cat > cellranger_atac_basic.yml << 'EOF'
+name: cellranger_atac
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.9
+  - wget
+  - curl
+  - git
+  - fastqc
+  - multiqc
+  - samtools=1.17
+  - bedtools=2.31.0
+  - pandas
+  - numpy
+  - scipy
+  - matplotlib
+  - seaborn
+  - jupyter
+  - r-base=4.3
+  - r-devtools
+  - r-ggplot2
+  - r-dplyr
+  - clang_osx-arm64
+  - clangxx_osx-arm64
+  - pip
+EOF
+
+###################
+
+
+## The following code is for linux systems
+
+# Create Linux-specific YAML
+cat > cellranger_atac_linux.yml << 'EOF'
+name: cellranger_atac
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.9
+  - wget
+  - curl
+  - git
+  - fastqc
+  - multiqc
+  - samtools=1.17
+  - bedtools=2.31.0
+  - pandas
+  - numpy
+  - scipy
+  - matplotlib
+  - seaborn
+  - jupyter
+  - r-base=4.3
+  - r-devtools
+  - r-ggplot2
+  - r-dplyr
+  - gcc_linux-64  # Linux compiler instead of macOS
+  - gxx_linux-64  # Linux C++ compiler
+  - pip
+EOF
+
+
+module load miniconda3/24.3.0
+
+
+bash
+
+# Create the environment
+conda env create -f cellranger_atac_linux.yml
+
+
+############################################################
+
+
+## Activate and Test
+
+
+# Activate the new environment
+conda activate cellranger_atac
+
+# Test
+python --version
+which samtools
+
+
+
+############################################
+
+
+## Install Cell Ranger ATAC
+
+
+bash
+
+# Create tools directory
+mkdir -p ~/tools
+cd ~/tools
+
+# From Cell Ranger ATAC website:
+curl -o cellranger-atac-2.1.0.tar.gz "https://cf.10xgenomics.com/releases/cell-atac/cellranger-atac-2.1.0.tar.gz?Expires=1757117796&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9jZi4xMHhnZW5vbWljcy5jb20vcmVsZWFzZXMvY2VsbC1hdGFjL2NlbGxyYW5nZXItYXRhYy0yLjEuMC50YXIuZ3oiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3NTcxMTc3OTZ9fX1dfQ__&Signature=lKXsht~2rQldq6LZMSFAKAzMW2Wo7FtYvOIoYRsCp1vC4Lm7xWwBWQit2Lhw5z-kmsQf9cTg15vm~C-R-781n-Jsmbu7eGo7qE~HCu8di7Jv~psufWL1EuyE~neN6lSkPbHXQTq3DjRLdcFKsw4iS3HEzANEPFEVNH9WDSutxY5SgNi8hC9lfe~Ezu0wGPWgbBZ6drf0kGnzBhQLqOsyzJSVuC0sfpqHULULL6gOTyeP2yfWpGi9T~4GTXNdjGGjQ3GRKVmpfpqKl~7IGNNfThpdOdjbfgssRAcoOZ0zCJKNsJ3TNCqE9dXL-yQTeSp2iA2Y58rqpM3agEAvOPuCig__&Key-Pair-Id=APKAI7S6A5RYOXBWRPDA"
+
+# Extract the downloaded file
+tar -xzf cellranger-atac-2.1.0.tar.gz
+
+# Check if extraction worked
+ls -la
+
+# Add to PATH
+export PATH=~/tools/cellranger-atac-2.1.0:$PATH
+
+# Test it
+cellranger-atac --help
+
+
+
+########################################################
+
+
+# Download 10X mm10 reference genome
+
+
+bash
+
+cd ~/tools
+wget https://cf.10xgenomics.com/supp/cell-atac/refdata-cellranger-atac-mm10-2020-A-2.0.0.tar.gz
+tar -xzf refdata-cellranger-atac-mm10-2020-A-2.0.0.tar.gz
+
+
+#########################################################
+
+
+## Install ArchR in the New Environment
+
+
+bash
+
+# Start R
+R
+
+# In R console:
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+
+# Install ArchR
+devtools::install_github("GreenleafLab/ArchR", ref="master", repos = BiocManager::repositories())
+
+# Install additional useful packages
+BiocManager::install(c("GenomicRanges", "SummarizedExperiment", "SingleCellExperiment"))
+
+# Test installation
+library(ArchR)
+addArchRGenome("mm10")
+
+# Exit R
+quit()
+
+
+
+######################################################
+
+
+## Test the Environment
+
+
+bash
+
+# Test key tools
+python --version
+which samtools
+which fastqc
+
+# Test Python packages
+python -c "import scanpy, pandas, numpy; print('✅ Python packages working')"
+
+# Test R
+R --version
