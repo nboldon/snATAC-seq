@@ -165,10 +165,49 @@ download_source_files() {
     # Check GTF
     if grep -q "^#" "$gtf_file" && grep -q -E "\tgene\t" "$gtf_file"; then
         print_success "GTF file appears valid"
+        
+        # Additional checks
+        local gene_count=$(grep -c -E "\tgene\t" "$gtf_file")
+        local transcript_count=$(grep -c -E "\ttranscript\t" "$gtf_file")
+        print_status "GTF contains $gene_count genes and $transcript_count transcripts"
+        
+        if [[ $gene_count -lt 10000 ]]; then
+            print_warning "GTF has unusually few genes ($gene_count), may be incomplete"
+        fi
     else
-        print_error "GTF file appears corrupted"
+        print_error "GTF file appears corrupted or incomplete"
+        print_status "Checking file contents..."
+        
+        # Show file size and first few lines for debugging
+        local file_size=$(du -h "$gtf_file" | cut -f1)
+        print_status "GTF file size: $file_size"
+        
+        if [[ -s "$gtf_file" ]]; then
+            print_status "First 10 lines of GTF file:"
+            head -10 "$gtf_file"
+            print_status "Last 5 lines of GTF file:"
+            tail -5 "$gtf_file"
+        else
+            print_error "GTF file is empty"
+        fi
+        
+        print_status "Removing corrupted file and retrying download..."
         rm -f "$gtf_file"
-        exit 1
+        
+        print_status "Retrying GTF download with different method..."
+        if wget -O "$gtf_file" "$GTF_URL"; then
+            print_status "Alternative download completed, verifying..."
+            if grep -q "^#" "$gtf_file" && grep -q -E "\tgene\t" "$gtf_file"; then
+                print_success "GTF file is now valid"
+            else
+                print_error "GTF download still failed"
+                exit 1
+            fi
+        else
+            print_error "Alternative GTF download also failed"
+            print_status "You may need to manually download from: $GTF_URL"
+            exit 1
+        fi
     fi
     
     # Show file sizes
