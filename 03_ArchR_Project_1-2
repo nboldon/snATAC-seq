@@ -27,6 +27,18 @@ addArchRThreads(threads=8)
 ###############################################
 
 
+# Create ArrowFiles
+ArrowFiles <- createArrowFiles(
+  inputFiles = "mouse_cortex_v2/outs/fragments.tsv.gz",
+  sampleNames = "cortex_v2",
+  minTSS = 4,
+  minFrags = 1000
+)
+
+
+###############################################
+
+
 arrowFiles <- c(
   "archr_analysis/arrow_files/cortex_fresh_v1.arrow",
   "archr_analysis/arrow_files/cortex_v1-1_chromx.arrow", 
