@@ -56,7 +56,7 @@ print(table(cellData$Sample))  # Check sample distribution
 print(summary(cellData$nFrags))
 
 #   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-#   1001   13093   22977   23931   32872   99055 
+#   1001   13076   22956   23933   32856   99055 
 
 
 ###################
@@ -122,27 +122,30 @@ projP_3 <- addReproduciblePeakSet(
 )
 
 
-    Group nCells nCellsUsed nReplicates nMin nMax maxPeaks
-C1     C1    199        199           2   40  159    99500
-C2     C2   1027       1027           4   58  356   150000
-C3     C3    129        129           2   40   89    64500
-C4     C4   1299       1299           4  236  397   150000
-C5     C5    308        308           4   50   92   150000
-C6     C6    504        504           4   72  160   150000
-C7     C7    653        540           2   40  500   150000
-C8     C8   4236       2000           4  500  500   150000
-C9     C9   2369       1847           4  347  500   150000
-C10   C10   3154       1616           4  116  500   150000
-C11   C11    127         93           2   43   50    46500
-C12   C12    264        264           4   44   79   132000
-C13   C13    449        449           4   78  143   150000
-C14   C14   2211       1881           4  381  500   150000
-C15   C15    871        871           4  122  254   150000
-C16   C16   1305       1305           4  225  364   150000
-C17   C17   1146       1146           4  146  355   150000
-C18   C18   2581       1953           4  453  500   150000
-C19   C19    143        143           2   51   92    71500
-C20   C20    404        404           4   94  106   150000
+#    Group nCells nCellsUsed nReplicates nMin nMax maxPeaks
+# C1     C1   1236       1236           4  227  368   150000
+# C2     C2   2582       1944           4  444  500   150000
+# C3     C3    811        811           4  116  238   150000
+# C4     C4     62         58           2   40   40    29000
+# C5     C5    129        129           2   40   89    64500
+# C6     C6    518        518           4   81  175   150000
+# C7     C7    770        770           4  147  226   150000
+# C8     C8    328        328           4   59   96   150000
+# C9     C9    518        518           4   83  164   150000
+# C10   C10    273        273           4   41   84   136500
+# C11   C11   2196       1872           4  372  500   150000
+# C12   C12    447        447           4   80  137   150000
+# C13   C13    139        139           2   69   70    69500
+# C14   C14    260        251           3   75   95   125500
+# C15   C15   1733       1733           4  397  452   150000
+# C16   C16   1979       1792           4  292  500   150000
+# C17   C17    161        161           3   43   72    80500
+# C18   C18   4191       2000           4  500  500   150000
+# C19   C19   2057       1834           4  334  500   150000
+# C20   C20   2026       1805           4  305  500   150000
+# C21   C21    416        416           4   68  124   150000
+# C22   C22    147        147           2   51   96    73500
+# C23   C23    400        400           4   93  105   150000
 
 
 
@@ -158,6 +161,8 @@ projP_3 <- addPeakMatrix(projP_3)
 #Verify matrices in project
 getAvailableMatrices(projP_3)
 
+
+saveArchRProject(ArchRProj = projP_3, outputDirectory = "/project/eon/Protocol_Paper/Save-ProjP_3", load = FALSE)
 
 
 ###############################################
@@ -181,11 +186,23 @@ markerList
 write.csv(markerList, file = "/project/eon//protocol_paper/Peak_markerList.csv", row.names = FALSE)
 
 
+###############################################
+
+heatmapPeaks <- plotMarkerHeatmap(
+  seMarker = markersPeaks, 
+  cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5",
+  transpose = TRUE
+)
+
+draw(heatmapPeaks, heatmap_legend_side = "bot", annotation_legend_side = "bot")
+
+plotPDF(heatmapPeaks, name = "Peak-Marker-Heatmap_2024-08-07", width = 8, height = 6, ArchRProj = projMCS7, addDOC = FALSE)
+
 
 #########
 
 
-saveArchRProject(ArchRProj = projP_3, outputDirectory = "/project/eon/protocol_paper/Save-ProjP_3", load = FALSE)
+saveArchRProject(ArchRProj = projP_3, outputDirectory = "/project/eon/Protocol_Paper/Save-ProjP_3", load = FALSE)
 
 
 ###############################################
