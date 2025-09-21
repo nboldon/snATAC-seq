@@ -13,4 +13,4 @@ module load miniconda3/24.3.0
 conda activate cellranger_atac
 
 # Run pipeline
-./bwa_pipeline.sh
+./cellranger_pipeline.sh
