@@ -24,7 +24,7 @@ library(BSgenome.Mmusculus.UCSC.mm10)
 
 set.seed(1)
 
-setwd("/project/eon/protocol_paper/archr_analysis")
+setwd("/project/eon/Protocol_Paper/cellRangerATAC_protocol_paper/archr_analysis")
 addArchRGenome("mm10")
 addArchRThreads(threads=8)
 
@@ -33,8 +33,13 @@ addArchRThreads(threads=8)
 
 
 #Load project
-projP_2 <- loadArchRProject(path = "/project/eon/protocol_paper/Save-ProjP_2", force = FALSE, showLogo = FALSE)
+projP_2 <- loadArchRProject(path = "/project/eon/Protocol_Paper/Save-ProjP_2", force = FALSE, showLogo = FALSE)
 
+#numberOfCells(1): 23379
+#medianTSS(1): 14.263
+#medianFrags(1): 22977
+
+getAvailableMatrices(projP_2)
 
 ###############################################
 
