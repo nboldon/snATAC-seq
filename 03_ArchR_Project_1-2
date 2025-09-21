@@ -27,13 +27,44 @@ addArchRThreads(threads=8)
 ###############################################
 
 
-# Create ArrowFiles
-ArrowFiles <- createArrowFiles(
-  inputFiles = "mouse_cortex_v2/outs/fragments.tsv.gz",
-  sampleNames = "cortex_v2",
-  minTSS = 7,
-  minFrags = 1000
+## Create Arrow Files
+
+
+# Set working directory 
+setwd("/project/eon/Protocol_Paper/cellRangerATAC_protocol_paper/archR_analysis")
+
+# Define input fragment files
+inputFiles <- c(
+  "../fragments_for_analysis/adult_brain_5k_v1_fragments.tsv.gz",
+  "../fragments_for_analysis/cortex_8k_v1-1_fragments.tsv.gz", 
+  "../fragments_for_analysis/cortex_8k_v2_chromiumx_fragments.tsv.gz",
+  "../fragments_for_analysis/cortex_8k_v2_controller_fragments.tsv.gz"
 )
+
+# Define sample names
+sampleNames <- c(
+  "cortex_fresh_v1",
+  "cortex_v1-1_chromx",
+  "cortex_v2_chromx", 
+  "cortex_v2_cont"
+)
+
+# Create Arrow files
+ArrowFiles <- createArrowFiles(
+  inputFiles = inputFiles,
+  sampleNames = sampleNames,
+  outputNames = sampleNames,
+  minTSS = 7,              # Minimum TSS enrichment score
+  minFrags = 1000,         # Minimum fragments per cell
+  addTileMat = TRUE,       # Add tile matrix for peak calling
+  addGeneScoreMat = TRUE,  # Add gene score matrix
+  bcTag= 'CB',
+  force = TRUE             # Overwrite existing files
+)
+
+# Print Arrow file paths
+print(ArrowFiles)
+
 
 
 ###############################################
