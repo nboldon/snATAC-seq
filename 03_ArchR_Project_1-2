@@ -71,10 +71,10 @@ print(ArrowFiles)
 
 
 arrowFiles <- c(
-  "archr_analysis/arrow_files/cortex_fresh_v1.arrow",
-  "archr_analysis/arrow_files/cortex_v1-1_chromx.arrow", 
-  "archr_analysis/arrow_files/cortex_v2_chromx.arrow",
-  "archr_analysis/arrow_files/cortex_v2_cont.arrow"
+  "archR_analysis/cortex_fresh_v1.arrow",
+  "archR_analysis/cortex_v1-1_chromx.arrow", 
+  "archR_analysis/cortex_v2_chromx.arrow",
+  "archR_analysis/cortex_v2_cont.arrow"
 )
 arrowFiles
 file.exists(arrowFiles)
