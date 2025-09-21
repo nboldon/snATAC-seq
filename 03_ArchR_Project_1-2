@@ -157,6 +157,14 @@ cellData <- getCellColData(projP_1)
 print(colnames(cellData))
 
 
+#print(colnames(cellData))
+# [1] "Sample"            "TSSEnrichment"     "ReadsInTSS"       
+# [4] "ReadsInPromoter"   "ReadsInBlacklist"  "PromoterRatio"    
+# [7] "PassQC"            "NucleosomeRatio"   "nMultiFrags"      
+# [10] "nMonoFrags"        "nFrags"            "nDiFrags"         
+# [13] "BlacklistRatio"    "DoubletScore"      "DoubletEnrichment"
+
+
 
 
 ## Ridge plot for each sample for the TSS Enrichment scores
@@ -232,7 +240,7 @@ plotPDF(p5,
 
 saveArchRProject(
 	ArchRProj=projP_1,
-	outputDirectory="./",
+	outputDirectory="/project/eon/Protocol_Paper/",
 	load=FALSE
 )
 
@@ -259,8 +267,8 @@ projP_2 <- filterDoublets(projP_1)
 
 projP_2
 #numberOfCells(1): 23379
-#medianTSS(1): 14.263
-#medianFrags(1): 22977
+#medianTSS(1): 14.257
+#medianFrags(1): 22956
 
 
 #####################################################
@@ -276,14 +284,19 @@ projP_2 <- addIterativeLSI(
 	name="IterativeLSI",
 	iterations=2,
 	clusterParams=list (
-	resolution=c(0.2),
+	resolution=c(0.8),
 	sampleCells=10000,
 	n.start=10
 	),
 	varFeatures=25000,
 	dimsToUse=1:30
 	)
-#Resulted in errors- did not run
+
+
+# Identified 19 clusters
+
+
+##################
 
 
 ## Reduce parallel processing and memory load to remedy errors, for ex:
@@ -334,7 +347,7 @@ projP_2 <- addHarmony(
 
 projP_2 <- addClusters(
 	input=projP_2,
-	reducedDims="IterativeLSI",
+	reducedDims="Harmony",
 	method="Seurat",
 	name="Clusters",
 	resolution=0.8
@@ -344,10 +357,11 @@ head(projP_2$Clusters)
 table(projP_2$Clusters)
 
 
-#  C1  C10  C11  C12  C13  C14  C15  C16  C17  C18  C19   C2  C20   C3   C4   C5 
-# 199 3154  127  264  449 2211  871 1305 1146 2581  143 1027  404  129 1299  308 
-#  C6   C7   C8   C9 
-# 504  653 4236 2369 
+#  C  C1  C10  C11  C12  C13  C14  C15  C16  C17  C18  C19   C2  C20  C21  C22  C23 
+# 1236  273 2196  447  139  260 1733 1979  161 4191 2057 2582 2026  416  147  400 
+#  C3   C4   C5   C6   C7   C8   C9 
+# 811   62  129  518  770  328  518 
+
 
 
 #####################################################
@@ -406,7 +420,7 @@ ggAlignPlots(p1,p2,type="h")
 #####################################################
 
 
-# #To run a t-Stocastic Neighbor Embedding (tSNE)
+# To run a t-Stocastic Neighbor Embedding (tSNE)
 
 projP_2 <- addTSNE(
 	ArchRProj = projP_2,
@@ -567,7 +581,7 @@ projP_2 <- addImputeWeights(projP_2)
 
 ## Save projP_2
 
-saveArchRProject(ArchRProj = projP_2, outputDirectory = "/project/eon/protocol_paper/Save-ProjP_2", load = FALSE)
+saveArchRProject(ArchRProj = projP_2, outputDirectory = "/project/eon/Protocol_Paper/Save-ProjP_2", load = FALSE)
 
 
 
