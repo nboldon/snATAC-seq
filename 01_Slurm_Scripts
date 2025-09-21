@@ -1,0 +1,147 @@
+
+## Submit a slurm job on your HPC system to request resources and computing time. 
+
+
+#################################
+
+
+module load miniconda3/24.3.0
+
+conda activate cellranger_atac
+
+
+################################# 
+
+
+
+## Interactive job
+
+
+bash
+
+salloc --account=eon --partition=mb --time=06:00:00 --cpus-per-task=8 --mem=80G
+
+#mb partition is the default and has good resources
+#DefMemPerCPU=10000 means 10GB per CPU, so 8 CPUs gives you 80GB max
+#TotalCPUs=2400 across 25 nodes means plenty of availability
+
+
+# Ex: 2 nodes with 16 tasks each (32 total cores) plus 8 cpus-per-task would require 256 cores total
+
+
+##########################
+
+
+## Alternative partitions if mb is busy
+
+
+### Teton partition (more nodes available)
+salloc --account=eon --partition=teton --time=06:00:00 --cpus-per-task=8 --mem=8G
+
+# Beartooth partition
+salloc --account=eon --partition=beartooth --time=06:00:00 --cpus-per-task=8 --mem=8G
+
+
+##########################################
+##########################################
+##########################################
+
+
+## Batch job submission
+
+
+bash
+
+sbatch --time=6:00:00 --cpus-per-task=8 --mem=16G --job-name=atac_preprocessing_pipeline bwa_pipeline.sh
+
+
+
+###########################################
+
+## Create a SLURM job script
+
+
+bash
+
+cat > submit_atac_pipeline.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=atac_preprocessing_pipeline
+#SBATCH --time=6:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+#SBATCH --output=atac_pipeline_%j.out
+#SBATCH --error=atac_pipeline_%j.err
+
+# Load modules
+module load miniconda3/24.3.0
+
+# Activate environment
+conda activate cellranger_atac
+
+# Run pipeline
+./bwa_pipeline.sh
+EOF
+
+chmod +x submit_atac_preprocessing_pipeline.sh
+sbatch submit_atac_preprocessing_pipeline.sh
+
+
+
+##########################################
+
+
+
+## Check job status
+
+
+bash
+
+squeue -u $USER
+
+
+
+## Monitor job output
+
+
+bash
+
+tail -f atac_pipeline_JOBID.out
+
+
+
+##########################################
+##########################################
+##########################################
+
+## Check available resources
+
+
+bash
+
+sinfo --partition=your_partition_name
+scontrol show partition
+
+
+###########################
+
+
+## Resource recommendations
+
+
+Resource recommendations:
+
+Time: 6 hours (conservative estimate)
+CPUs: 8 cores (BWA can use more threads effectively)
+Memory: 16GB (BWA alignment needs substantial RAM)
+Storage: Ensure you have ~30-50GB free space
+
+
+
+##########################################
+##########################################
+##########################################
+##########################################
+##########################################
+
+
+
