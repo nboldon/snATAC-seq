@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=atac_pipeline
+#SBATCH --time=6:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+#SBATCH --output=atac_pipeline_%j.out
+#SBATCH --error=atac_pipeline_%j.err
+
+# Load modules
+module load miniconda3/24.3.0
+
+# Activate environment
+conda activate cellranger_atac
+
+# Run pipeline
+./bwa_pipeline.sh
