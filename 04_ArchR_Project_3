@@ -24,9 +24,9 @@ library(BSgenome.Mmusculus.UCSC.mm10)
 
 set.seed(1)
 
-setwd("/project/eon/Protocol_Paper/cellRangerATAC_protocol_paper/archr_analysis")
+setwd("/project/eon/Protocol_Paper/cellRangerATAC_protocol_paper/archR_analysis")
 addArchRGenome("mm10")
-addArchRThreads(threads=8)
+addArchRThreads(threads=1)
 
 
 ###############################################
@@ -179,11 +179,20 @@ markersPeaks <- getMarkerFeatures(
 
 
 # To retrieve particular slices of the SummarizedExperiment; returns a list of DataFrame objects, one for each cell group
-markerList <- getMarkers(markersPeaks, cutOff = "FDR <= 0.01 & Log2FC >= 1.25")
+markerList <- getMarkers(markersPeaks, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
 markerList
 
 # Save markerList as a .csv file locally
-write.csv(markerList, file = "/project/eon//protocol_paper/Peak_markerList.csv", row.names = FALSE)
+write.csv(markerList, file = "/project/eon//Protocol_Paper/cellRangerATAC_protocol_paper/archR_analysis/Peak_markerList_conservative.csv", row.names = FALSE)
+
+
+#######
+
+markerList <- getMarkers(markersPeaks, cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5")
+markerList
+
+# Save markerList as a .csv file locally
+write.csv(markerList, file = "/project/eon//Protocol_Paper/cellRangerATAC_protocol_paper/archR_analysis/Peak_markerList_expanded.csv", row.names = FALSE)
 
 
 ###############################################
@@ -196,10 +205,92 @@ heatmapPeaks <- plotMarkerHeatmap(
 
 draw(heatmapPeaks, heatmap_legend_side = "bot", annotation_legend_side = "bot")
 
-plotPDF(heatmapPeaks, name = "Peak-Marker-Heatmap_2024-08-07", width = 8, height = 6, ArchRProj = projMCS7, addDOC = FALSE)
+plotPDF(heatmapPeaks, name = "Peak-Marker-Heatmap_2025-09-22", width = 8, height = 6, ArchRProj = projP_3, addDOC = FALSE)
 
 
-#########
+###############################################
+###############################################
+###############################################
+
+
+# Add motif annotations
+
+projP_3 <- addMotifAnnotations(ArchRProj = projP_3, motifSet = "cisbp", name = "Motif")
+
+
+###############################################
+
+
+# Motif enrichment in marker peaks
+
+enrichMotifs <- peakAnnoEnrichment(
+    seMarker = markersPeaks,
+    ArchRProj = projP_3,
+    peakAnnotation = "Motif",
+    cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5"
+  )
+
+enrichMotifs
+
+heatmapEM <- plotEnrichHeatmap(enrichMotifs, n = 7, transpose = TRUE)
+
+ComplexHeatmap::draw(heatmapEM, heatmap_legend_side = "bot", annotation_legend_side = "bot")
+
+plotPDF(heatmapEM, name = "Motifs-Enriched-Marker-Heatmap_2025-09-22", width = 8, height = 6, ArchRProj = projP_3, addDOC = FALSE)
+
+
+############################################
+############################################
+
+
+############################################
+############################################
+
+
+## Motif Deviations
+
+
+# First check to make sure we've added motif annotations to the ArchRProject
+
+if("Motif" %ni% names(projP_3@peakAnnotation)){c
+    projP_3 <- addMotifAnnotations(ArchRProj = projP_3, motifSet = "cisbp", name = "Motif")
+}
+
+
+# We also need to add a set of background peaks which are used in computing deviations. 
+# Background peaks are chosen using the chromVAR::getBackgroundPeaks() function which samples peaks based on similarity in GC-content and number of fragments across all samples using the Mahalanobis distance.
+
+projP_3 <- addBgdPeaks(projP_3)
+
+
+# We are now ready to compute per-cell deviations accross all of our motif annotations using the addDeviationsMatrix() function. This function has an optional parameter called matrixName that allows us to define the name of the deviations matrix that will be stored in the Arrow files. 
+# If we do not provide a value to this parameter, as in the example below, this function creates a matrix name by adding the word “Matrix” to the name of the peakAnnotation. 
+# The example below creates a deviations matrix in each of our Arrow files called “MotifMatrix”.
+
+projP_3 <- addDeviationsMatrix(
+  ArchRProj = projP_3, 
+  peakAnnotation = "Motif",
+  force = TRUE
+)
+
+
+# To access these deviations, we use the getVarDeviations() function. 
+# If we want this function to return a ggplot object, we set plot = TRUE otherwise, this function would return the DataFrame object. 
+# The head of that DataFrame object is displayed by default when the function is run.
+
+plotVarDev <- getVarDeviations(projP_3, name = "MotifMatrix", plot = TRUE)
+
+
+# Plot variable deviations
+plotVarDev
+
+
+# Save plot
+plotPDF(plotVarDev, name = "Variable-Motif-Deviation-Scores_2025-09-22", width = 5, height = 5, ArchRProj = projP_3, addDOC = FALSE)
+
+
+############################################
+############################################
 
 
 saveArchRProject(ArchRProj = projP_3, outputDirectory = "/project/eon/Protocol_Paper/Save-ProjP_3", load = FALSE)
