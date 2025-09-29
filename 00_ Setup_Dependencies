@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Step 2: Setup Download Dependencies for snATAC-seq Pipeline
+# Setup Download Dependencies for snATAC-seq Pipeline
 # Configures SRA tools and download utilities within existing cellranger_atac environment
 
 set -euo pipefail
