@@ -9,13 +9,21 @@
 export PATH=/home/nboldon/tools/cellranger-atac-2.1.0:$PATH
 
 # Test that it's now accessible
-cellranger-atac --help
+cellranger_atac --help
 
+############
+
+conda activate cellranger_atac
+
+conda deactivate
 
 ############
 
 
 bash
+
+# Create directory to store original data downloads
+mkdir ~/protocol_paper/orig_data
 
 # Navigate to your data directory
 cd ~/protocol_paper/orig_data
@@ -116,6 +124,7 @@ cd ./mm10_reference
 
 # Save the build_mm10_reference.sh script to a file 
 
+
 bash
 
 # Make the script executable and run it
@@ -138,8 +147,11 @@ which cellranger-atac
 cellranger-atac --help
 
 
+#######################################################
+
 
 ## Cell Ranger ATAC mkref requires a configuration file approach; a config file is required. 
+
 
 bash
 
@@ -158,12 +170,13 @@ EOF
 cellranger-atac mkref --config=mm10_config.txt
 
 
-
 #######################################################
+
 
 ## Cell Ranger ATAC Preprocessing
 
 # NOTE: These steps may take several hours per sample, depending on your computing capabillities. 
+
 
 bash
 
@@ -196,7 +209,7 @@ cellranger-atac count \
   --sample=8k_mouse_cortex_ATACv2_nextgem_Chromium_Controller
 
 
-# This creates: fragments.tsv.gz, peaks.bed, etc.
+# This creates: fragments.tsv.gz, fragments.tsv.gz.tbi, peaks.bed, singlecell.csv, BAM files, etc.
 
 
 ####################################################
