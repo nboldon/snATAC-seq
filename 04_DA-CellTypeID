@@ -1,0 +1,56 @@
+
+## Gene scores and marker genes
+
+
+markerGS <- getMarkerFeatures(
+	ArchRProj = projP_2,
+	useMatrix = "GeneScoreMatrix",
+	groupBy = "Clusters",
+	bias = c("TSSEnrichment", "log10(nFrags)"),
+	testMethod = "wilcoxon"
+)
+
+markerList <- getMarkers(markerGS, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+
+
+# Marker list by cluster
+markerList$C6
+
+
+markerList.markers <- data.frame(getMarkers(markerGS, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25"))
+
+
+
+for(i in names(markerList)) {
+	write.csv(markerList[[i]], file = paste(i, ".csv", sep = ""))
+}
+
+
+
+#####################################################
+#####################################################
+#####################################################
+
+
+
+##Use MAGIC to impute gene scores by smoothing signal across nearby cells
+
+#Impute weights to the ArchRProject
+projP_2 <- addImputeWeights(projP_2)
+
+
+
+#####################################################
+#####################################################
+#####################################################
+
+
+## Save projP_2
+
+saveArchRProject(ArchRProj = projP_2, outputDirectory = "/project/eon/Protocol_Paper/Save-ProjP_2", load = FALSE)
+
+
+
+#####################################################
+#####################################################
+#####################################################
