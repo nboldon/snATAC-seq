@@ -1,4 +1,11 @@
 
+# Load Project 2
+projP_2 <- loadArchRProject(path="_")
+
+
+#####################################################
+
+
 ## Gene scores and marker genes
 
 
@@ -13,12 +20,14 @@ markerGS <- getMarkerFeatures(
 markerList <- getMarkers(markerGS, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
 
 
+##############
+
+
 # Marker list by cluster
 markerList$C6
 
 
 markerList.markers <- data.frame(getMarkers(markerGS, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25"))
-
 
 
 for(i in names(markerList)) {
