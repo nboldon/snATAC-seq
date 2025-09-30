@@ -1,0 +1,285 @@
+
+module load miniconda3/24.3.0
+conda activate cellranger_atac
+
+###############################################
+
+
+R
+
+# Load libraries
+library(ArchR)
+library(Seurat)
+library(BiocManager)
+library(BiocGenerics)
+library(clusterProfiler)  
+library(org.Mm.eg.db) #For mouse genomes
+library(AnnotationDbi)
+library(enrichplot)
+library(pheatmap)
+
+set.seed(1)
+
+addArchRGenome("mm10")
+addArchRThreads(threads=8)
+
+
+###############################################
+
+
+## Create Arrow Files
+
+
+# Set working directory 
+setwd("/project/eon/Protocol_Paper/cellRangerATAC_protocol_paper/archR_analysis")
+
+# Define input fragment files
+inputFiles <- c(
+  "../fragments_for_analysis/adult_brain_5k_v1_fragments.tsv.gz",
+  "../fragments_for_analysis/cortex_8k_v1-1_fragments.tsv.gz", 
+  "../fragments_for_analysis/cortex_8k_v2_chromiumx_fragments.tsv.gz",
+  "../fragments_for_analysis/cortex_8k_v2_controller_fragments.tsv.gz"
+)
+
+# Define sample names
+sampleNames <- c(
+  "cortex_fresh_v1",
+  "cortex_v1-1_chromx",
+  "cortex_v2_chromx", 
+  "cortex_v2_cont"
+)
+
+# Create Arrow files
+ArrowFiles <- createArrowFiles(
+  inputFiles = inputFiles,
+  sampleNames = sampleNames,
+  outputNames = sampleNames,
+  minTSS = 7,              # Minimum TSS enrichment score
+  minFrags = 1000,         # Minimum fragments per cell
+  addTileMat = TRUE,       # Add tile matrix for peak calling
+  addGeneScoreMat = TRUE,  # Add gene score matrix
+  bcTag= 'CB',
+  force = TRUE             # Overwrite existing files
+)
+
+# Print Arrow file paths
+print(ArrowFiles)
+
+
+
+###############################################
+
+
+arrowFiles <- c(
+  "archR_analysis/cortex_fresh_v1.arrow",
+  "archR_analysis/cortex_v1-1_chromx.arrow", 
+  "archR_analysis/cortex_v2_chromx.arrow",
+  "archR_analysis/cortex_v2_cont.arrow"
+)
+arrowFiles
+file.exists(arrowFiles)
+
+
+projP_1 <- ArchRProject (
+	ArrowFiles=arrowFiles,
+	outputDirectory="archr_analysis",
+	copyArrows=FALSE,
+	showLogo=FALSE
+)
+
+
+projP_1
+numberOfCells(1): 24995
+medianTSS(1): 14.207
+medianFrags(1): 23530
+
+
+#####################################################
+
+
+## Infer snATAC-seq doublets with ArchR
+
+projP_1 <- addDoubletScores(
+	input=projProtocol_1,
+	k=10,
+	knnMethod="UMAP",
+	LSIMethod=1
+)
+
+
+###############################################
+
+
+## Extract cell metadata
+
+
+getAvailableMatrices(projP_1)
+#"GeneScoreMatrix" "TileMatrix"  
+
+quantile(projP_1$TSSEnrichment)
+# 0%     25%     50%     75%    100% 
+# 7.0000 11.4420 14.2070 18.4945 65.4460 
+
+
+df <- getCellColData(projP_1,
+	select=c("log10(nFrags)",
+	"TSSEnrichment"))
+df
+
+
+cellData <- getCellColData(projP_1)
+print(colnames(cellData))
+
+
+#print(colnames(cellData))
+# [1] "Sample"            "TSSEnrichment"     "ReadsInTSS"       
+# [4] "ReadsInPromoter"   "ReadsInBlacklist"  "PromoterRatio"    
+# [7] "PassQC"            "NucleosomeRatio"   "nMultiFrags"      
+# [10] "nMonoFrags"        "nFrags"            "nDiFrags"         
+# [13] "BlacklistRatio"    "DoubletScore"      "DoubletEnrichment"
+
+
+###############################################
+
+
+## Scatterplot of TSS enrichment vs. unique fragment counts
+
+
+p <- ggPoint(
+	x=df[,1],
+	y=df[,2],
+	colorDensity=TRUE,
+	continuousSet="sambaNight",
+	xlabel="Log10 Unique Fragments",
+	ylabel="TSS Enrichment",
+	xlim=c(log10(500), quantile(df[,1], probs=0.99)),
+	ylim=c(0, quantile(df[,2], probs=0.99))
+)	
+#+ geom_hline(yintercept=4, lty="dashed",
+#+ geom_vline(xintercept=3, Ity="dashed")
+
+plotPDF(
+	p, name="Protocol 1 - TSS Enrichment vs. Unique Fragments",
+	ArchRProj=projP_1,
+	addDOC=FALSE
+)
+
+
+###############################################
+
+
+## Ridge plot for each sample for the TSS Enrichment scores
+
+
+p1 <- plotGroups(
+	ArchRProj=projP_1,
+	groupBy="Sample",
+	colorBy="cellColData",
+	name="TSSEnrichment",
+	plotAs="ridges"
+)
+
+
+p2 <- plotGroups(
+        ArchRProj=projP_1,
+        groupBy="Sample",
+        colorBy="cellColData",
+        name="TSSEnrichment",
+        plotAs="violin",
+	alpha=0.4,
+	addBoxPlot=TRUE
+)
+
+
+p3 <- plotGroups(
+        ArchRProj=projP_1,
+        groupBy="Sample",
+        colorBy="cellColData",
+        name="log10(nFrags)",
+        plotAs="ridges"
+)
+
+
+p4 <- plotGroups(
+        ArchRProj=projP_1,
+        groupBy="Sample",
+        colorBy="cellColData",
+        name="log10(nFrags)",
+        plotAs="violin",
+        alpha=0.4,
+        addBoxPlot=TRUE
+)
+
+
+plotPDF(p1,p2,p3,p4,
+	name="projP_1_QualityControl.pdf",
+	ArchRProj=projP_1,
+	addDOC=FALSE,
+	width=4, height=4
+)
+
+
+
+## Fragment size distribution plot
+
+p5 <- plotFragmentSizes(
+	ArchRProj=projP_1,
+)
+
+plotPDF(p5,
+	name="projP_1_QC_FragSizes.pdf",
+	ArchRProj=projP_1,
+	addDOC=FALSE,
+	width=5, height=5
+)
+
+
+#####################################################
+
+
+## Save projP_1
+
+saveArchRProject(
+	ArchRProj=projP_1,
+	outputDirectory="/project/eon/Protocol_Paper/",
+	load=FALSE
+)
+
+
+#####################################################
+
+
+## Filtering Doublets
+
+
+## Create projP_2
+projP_2 <- filterDoublets(projP_1)
+
+#Filtering 1616 cells from ArchRProject!
+#	cortex_fresh_v1 : 179 of 4231 (4.2%)
+#	cortex_v1-1_chromx : 445 of 6675 (6.7%)
+#	cortex_v2_chromx : 523 of 7236 (7.2%)
+#	cortex_v2_cont : 469 of 6853 (6.8%)
+
+
+projP_2
+#numberOfCells(1): 23379
+#medianTSS(1): 14.257
+#medianFrags(1): 22956
+
+
+#####################################################
+
+
+## Save projP_2
+
+saveArchRProject(
+	ArchRProj=projP_2,
+	outputDirectory="/project/eon/Protocol_Paper/",
+	load=FALSE
+)
+
+
+#####################################################
+#####################################################
+#####################################################
