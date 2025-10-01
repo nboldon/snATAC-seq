@@ -181,35 +181,60 @@ pathToMacs2 <- "/home/nboldon/.conda/envs/cellranger_atac/bin/macs2"
 projP_3 <- addReproduciblePeakSet(
     ArchRProj = projP_3, 
     groupBy = "Clusters", 
-    pathToMacs2 = pathToMacs2
+    pathToMacs2 = pathToMacs2, 
+    plot = TRUE
 )
+
+# The plot=TRUE code creates a peak call summary plot that identifies distal, exonic, intronic, and promotor regions
+
+
+##################
+
+
+# Extract the cellGroups from the first element
+cellGroups <- gc[[1]]$cellGroups
+
+# Create the summary table
+summary_table <- data.frame(
+  Group = names(cellGroups),
+  nCells = sapply(cellGroups, function(x) sum(lengths(x@listData))),
+  nCellsUsed = sapply(cellGroups, function(x) sum(lengths(x@listData))),
+  nReplicates = sapply(cellGroups, function(x) length(x@listData)),
+  nMin = sapply(cellGroups, function(x) min(lengths(x@listData))),
+  nMax = sapply(cellGroups, function(x) max(lengths(x@listData))),
+  maxPeaks = 150000  # This appears to be a default value
+)
+
+# Adjust maxPeaks for small groups 
+summary_table$maxPeaks <- ifelse(summary_table$nCells < 100, 29000, 150000)
+
+print(summary_table)
 
 
 #    Group nCells nCellsUsed nReplicates nMin nMax maxPeaks
-# C1     C1   1236       1236           4  227  368   150000
-# C2     C2   2582       1944           4  444  500   150000
-# C3     C3    811        811           4  116  238   150000
-# C4     C4     62         58           2   40   40    29000
-# C5     C5    129        129           2   40   89    64500
-# C6     C6    518        518           4   81  175   150000
-# C7     C7    770        770           4  147  226   150000
-# C8     C8    328        328           4   59   96   150000
-# C9     C9    518        518           4   83  164   150000
-# C10   C10    273        273           4   41   84   136500
-# C11   C11   2196       1872           4  372  500   150000
-# C12   C12    447        447           4   80  137   150000
-# C13   C13    139        139           2   69   70    69500
-# C14   C14    260        251           3   75   95   125500
-# C15   C15   1733       1733           4  397  452   150000
-# C16   C16   1979       1792           4  292  500   150000
-# C17   C17    161        161           3   43   72    80500
-# C18   C18   4191       2000           4  500  500   150000
-# C19   C19   2057       1834           4  334  500   150000
-# C20   C20   2026       1805           4  305  500   150000
-# C21   C21    416        416           4   68  124   150000
-# C22   C22    147        147           2   51   96    73500
-# C23   C23    400        400           4   93  105   150000
-
+#C1     C1   1236       1236           4  227  368   150000
+#C2     C2   1944       1944           4  444  500   150000
+#C3     C3    811        811           4  116  238   150000
+#C4     C4     80         80           2   40   40    29000
+#C5     C5    129        129           2   40   89   150000
+#C6     C6    518        518           4   81  175   150000
+#C7     C7    770        770           4  147  226   150000
+#C8     C8    328        328           4   59   96   150000
+#C9     C9    518        518           4   83  164   150000
+#C10   C10    273        273           4   41   84   150000
+#C11   C11   1872       1872           4  372  500   150000
+#C12   C12    447        447           4   80  137   150000
+#C13   C13    139        139           2   69   70   150000
+#C14   C14    251        251           3   75   95   150000
+#C15   C15   1733       1733           4  397  452   150000
+#C16   C16   1792       1792           4  292  500   150000
+#C17   C17    161        161           3   43   72   150000
+#C18   C18   2000       2000           4  500  500   150000
+#C19   C19   1834       1834           4  334  500   150000
+#C20   C20   1805       1805           4  305  500   150000
+#C21   C21    416        416           4   68  124   150000
+#C22   C22    147        147           2   51   96   150000
+#C23   C23    400        400           4   93  105   150000
 
 
 ####################3
@@ -274,93 +299,3 @@ plotPDF(heatmapPeaks, name = "Peak-Marker-Heatmap_2025-09-22", width = 8, height
 ###############################################
 ###############################################
 ###############################################
-
-
-# Add motif annotations
-
-projP_3 <- addMotifAnnotations(ArchRProj = projP_3, motifSet = "cisbp", name = "Motif")
-
-
-###############################################
-
-
-# Motif enrichment in marker peaks
-
-enrichMotifs <- peakAnnoEnrichment(
-    seMarker = markersPeaks,
-    ArchRProj = projP_3,
-    peakAnnotation = "Motif",
-    cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5"
-  )
-
-enrichMotifs
-
-heatmapEM <- plotEnrichHeatmap(enrichMotifs, n = 7, transpose = TRUE)
-
-ComplexHeatmap::draw(heatmapEM, heatmap_legend_side = "bot", annotation_legend_side = "bot")
-
-plotPDF(heatmapEM, name = "Motifs-Enriched-Marker-Heatmap_2025-09-22", width = 8, height = 6, ArchRProj = projP_3, addDOC = FALSE)
-
-
-############################################
-############################################
-
-
-############################################
-############################################
-
-
-## Motif Deviations
-
-
-# First check to make sure we've added motif annotations to the ArchRProject
-
-if("Motif" %ni% names(projP_3@peakAnnotation)){c
-    projP_3 <- addMotifAnnotations(ArchRProj = projP_3, motifSet = "cisbp", name = "Motif")
-}
-
-
-# We also need to add a set of background peaks which are used in computing deviations. 
-# Background peaks are chosen using the chromVAR::getBackgroundPeaks() function which samples peaks based on similarity in GC-content and number of fragments across all samples using the Mahalanobis distance.
-
-projP_3 <- addBgdPeaks(projP_3)
-
-
-# We are now ready to compute per-cell deviations accross all of our motif annotations using the addDeviationsMatrix() function. This function has an optional parameter called matrixName that allows us to define the name of the deviations matrix that will be stored in the Arrow files. 
-# If we do not provide a value to this parameter, as in the example below, this function creates a matrix name by adding the word “Matrix” to the name of the peakAnnotation. 
-# The example below creates a deviations matrix in each of our Arrow files called “MotifMatrix”.
-
-projP_3 <- addDeviationsMatrix(
-  ArchRProj = projP_3, 
-  peakAnnotation = "Motif",
-  force = TRUE
-)
-
-
-# To access these deviations, we use the getVarDeviations() function. 
-# If we want this function to return a ggplot object, we set plot = TRUE otherwise, this function would return the DataFrame object. 
-# The head of that DataFrame object is displayed by default when the function is run.
-
-plotVarDev <- getVarDeviations(projP_3, name = "MotifMatrix", plot = TRUE)
-
-
-# Plot variable deviations
-plotVarDev
-
-
-# Save plot
-plotPDF(plotVarDev, name = "Variable-Motif-Deviation-Scores_2025-09-22", width = 5, height = 5, ArchRProj = projP_3, addDOC = FALSE)
-
-
-############################################
-############################################
-
-
-saveArchRProject(ArchRProj = projP_3, outputDirectory = "/project/eon/Protocol_Paper/Save-ProjP_3", load = FALSE)
-
-
-###############################################
-###############################################
-###############################################
-
-
