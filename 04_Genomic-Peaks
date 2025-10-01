@@ -41,6 +41,7 @@ projP_2 <- loadArchRProject(path = "/project/eon/Protocol_Paper/Save-ProjP_2", f
 
 getAvailableMatrices(projP_2)
 
+
 ###############################################
 
 
@@ -59,8 +60,7 @@ print(summary(cellData$nFrags))
 #   1001   13076   22956   23933   32856   99055 
 
 
-###################
-###################
+###############################################
 
 
 bash
@@ -72,6 +72,8 @@ which macs
 # ~/.conda/envs/cellranger_atac/bin/macs2
 macs2 --version
 
+
+########################
 
 
 R
@@ -91,20 +93,81 @@ getGenome(projP_2)
 
 # If needed, reset the genome
 addArchRGenome("mm10")
-####################
 
 
-
-####################
+###############################################
 
 
 R
-
 
 ## Pseudo-bulk replicates in ArchR
 
 projP_3 <- addGroupCoverages(ArchRProj = projP_2, groupBy = "Clusters") 
 
+
+#################
+
+
+# Check that GroupCoverages directory exists
+list.files(getOutputDirectory(projP_3))  # Should see "GroupCoverages" folder
+
+# Check contents of GroupCoverages
+list.files(file.path(getOutputDirectory(projP_3), "GroupCoverages"))
+
+# Check number of cells per cluster/cell type
+cellsPerGroup <- table(projP_3$Clusters)  # or proj$YourCellTypeColumn
+print(cellsPerGroup)
+
+# Visualize
+barplot(cellsPerGroup, las = 2, main = "Cells per Cluster",
+        ylab = "Number of Cells", col = "steelblue")
+abline(h = 100, col = "red", lty = 2)  # Recommended minimum
+
+# Check fragment depth per cell type
+p1 <- plotGroups(
+    ArchRProj = projP_3,
+    groupBy = "Clusters",
+    colorBy = "cellColData",
+    name = "nFrags",
+    plotAs = "violin"
+)
+p1
+
+# Calculate total fragments per pseudo-bulk
+cellData <- getCellColData(projP_3, select = c("Clusters", "nFrags"))
+cellData <- as.data.frame(cellData)
+
+fragmentDepth <- aggregate(nFrags ~ Clusters, data = cellData, FUN = sum)
+print(fragmentDepth)
+
+# Check if adequate
+fragmentDepth$adequate <- fragmentDepth$nFrags >= 25e6
+print(fragmentDepth)
+
+
+# Check TSS enrichment by cluster (signal quality)
+p2 <- plotGroups(
+    ArchRProj = projP_3,
+    groupBy = "Clusters",
+    colorBy = "cellColData", 
+    name = "TSSEnrichment",
+    plotAs = "violin"
+)
+p2
+
+# Visualize fragment depth per cluster
+ggplot(fragmentDepth, aes(x = Clusters, y = nFrags/1e6, fill = adequate)) +
+    geom_bar(stat = "identity") +
+    geom_hline(yintercept = 25, linetype = "dashed", color = "red") +
+    labs(y = "Total Fragments (millions)", 
+         title = "Fragment Depth per Pseudo-bulk",
+         subtitle = "Red line = 25M minimum recommended") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values = c("TRUE" = "darkgreen", "FALSE" = "darkred"))
+
+
+###############################################
 
 
 # Calling Peaks w/ Macs2
