@@ -6,6 +6,17 @@ projP_2 <- loadArchRProject(path="_")
 #####################################################
 
 
+##Use MAGIC to impute gene scores by smoothing signal across nearby cells
+
+#Impute weights to the ArchRProject
+projP_2 <- addImputeWeights(projP_2)
+
+
+#####################################################
+#####################################################
+#####################################################
+
+
 ## Gene scores and marker genes
 
 
@@ -33,19 +44,6 @@ markerList.markers <- data.frame(getMarkers(markerGS, cutOff = "FDR <= 0.01 & ab
 for(i in names(markerList)) {
 	write.csv(markerList[[i]], file = paste(i, ".csv", sep = ""))
 }
-
-
-
-#####################################################
-#####################################################
-#####################################################
-
-
-
-##Use MAGIC to impute gene scores by smoothing signal across nearby cells
-
-#Impute weights to the ArchRProject
-projP_2 <- addImputeWeights(projP_2)
 
 
 
