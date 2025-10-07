@@ -1,1 +1,153 @@
+#########################################
+#########################################
+
+## Heatmaps for marker genes
+
+
+# Top 3 cell type-specific marker genes by category:
+#topMarkerGenes <- c(#Glutamatergic "Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
+#GABAergic "Gad1", "Pvalb", "Vip", "Sst", "Reln",
+#Microglia "C1qa, Cc14", "Cd14", "Cx3cr1", "Trem2",
+#Oligodendrocytes "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
+#Astrocytes "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
+#Endo-vasc "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
+topMarkerGenes <- c("Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
+                    "Gad1", "Pvalb", "Vip", "Sst", "Reln",
+                    "C1qa, Cc14", "Cd14", "Cx3cr1", "Trem2",
+                    "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
+                    "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
+                    "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
+
+heatmapGS <- plotMarkerHeatmap(
+  seMarker = markerGS,
+  cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25",
+  labelMarkers = topMarkerGenes,
+  transpose = TRUE
+)
+
+# To plot the heatmap
+ComplexHeatmap::draw(heatmapGS, heatmap_legend_side = "bot", annotation_legend_side = "bot")
+
+# To save the heatmap
+plotPDF(heatmapGS, name = "Top_Cell-Type-Markers_Heatmap_2025-10-07", width = 8, height = 6, ArchRProj = projP_2, addDOC = FALSE)
+
+
+#####################################################
+#####################################################
+#####################################################
+
+
+##Visualizing marker genes on a UMAP embedding
+
+
+topMarkerGenes <- c("Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
+                    "Gad1", "Pvalb", "Vip", "Sst", "Reln",
+                    "Cd14", "Cx3cr1", "Trem2",
+                    "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
+                    "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
+                    "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
+
+p <- plotEmbedding(
+  ArchRProj = projP_2,
+  colorBy = "GeneScoreMatrix",
+  name = topMarkerGenes,
+  embedding = "UMAP",
+  quantCut = c(0.01, 0.95),
+  imputeWeights = NULL
+)
+
+# ERROR: "C1qa, Cc14" does not exist
+
+
+#To plot a specific gene
+p$Olig2
+
+#To plot all genes, use cowplot to arrange the various marker genes into a single plot
+p2 <- lapply(p, function(x){
+  x + guides(color = FALSE, fill = FALSE) +
+    theme_ArchR(baseSize = 6.5) +
+    theme(plot.margin = unit(c(0,0,0,0), "cm")) +
+    theme(
+      axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks.y=element_blank()
+    )
+})
+do.call(cowplot::plot_grid, c(list(ncol = 3),p2))
+
+
+#To save an editable vectorized version of the plot
+# Save the cowplot grid you already created
+combined_plot <- do.call(cowplot::plot_grid, c(list(ncol = 3), p2))
+
+# Use standard ggsave
+ggsave("UMAP-MarkerGenes-WO-Imputation_2025-10-07.pdf", 
+       combined_plot, 
+       width = 15, 
+       height = 20,
+       useDingbats = FALSE)  # Makes it editable in Illustrator
+
+
+#####################################################
+
+
+##Use MAGIC to impute gene scores by smoothing signal across nearby cells
+
+#The impute weights can also be passed to plotEmbedding() when plotting gene scores overlayed on the UMAP embedding
+topMarkerGenes <- c("Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
+                    "Gad1", "Pvalb", "Vip", "Sst", "Reln",
+                    "Cd14", "Cx3cr1", "Trem2",
+                    "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
+                    "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
+                    "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
+
+p <- plotEmbedding(
+  ArchRProj = projP_2,
+  colorBy = "GeneScoreMatrix",
+  name = topMarkerGenes,
+  embedding = "UMAP",
+  imputeWeights = getImputeWeights(projP_3)
+)
+
+# ERROR: "C1qa, Cc14" does not exist
+
+#To subset the plot list to select a specific gene
+p$Olig2
+
+#To plot all the marker genes at once using cowplot
+#Rearrange for grid plotting
+p2<- lapply(p, function(x){
+  x + guides(color = FALSE, fill = FALSE) +
+    theme_ArchR(baseSize = 6.5) +
+    theme(plot.margin = unit(c(0,0,0,0), "cm")) +
+    theme(
+      axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      axis.text.y=element_blank(),
+      axis.ticks.y=element_blank()
+    )
+})
+do.call(cowplot::plot_grid, c(list(ncol = 3),p2))
+
+#To save an editable vectorized version of the plot
+# Save the cowplot grid you already created
+combined_plot <- do.call(cowplot::plot_grid, c(list(ncol = 3), p2))
+
+# Use standard ggsave
+ggsave("UMAP-MarkerGenes-W-Imputation_2025-10-07.pdf", 
+       combined_plot, 
+       width = 15, 
+       height = 20,
+       useDingbats = FALSE)  # Makes it editable in Illustrator
+
+
+#####################################################
+#####################################################
+#####################################################
+
+
+## Save projP_2
+
+saveArchRProject(ArchRProj = projP_2, outputDirectory = "/Volumes/DataBox2/Save-ProjP_2", load = FALSE)
 
