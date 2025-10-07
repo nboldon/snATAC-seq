@@ -139,6 +139,10 @@ print(colnames(cellData))
 # [13] "BlacklistRatio"    "DoubletScore"      "DoubletEnrichment"
 
 
+head(projP_1@cellColData)
+
+
+
 ###############################################
 
 
