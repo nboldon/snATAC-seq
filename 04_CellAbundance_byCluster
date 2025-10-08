@@ -1,0 +1,335 @@
+#####################################################
+#####################################################
+
+
+## Cell abundance analysis by Cluster
+
+
+## First, generate normalized cell counts for each sample by cluster
+
+# Get cell metadata
+cellData <- getCellColData(projP_3)
+
+# Check sample names
+print(table(cellData$Sample))
+sample_names <- sort(unique(cellData$Sample))
+print(sample_names)
+
+# Create contingency table
+cell_counts <- table(cellData$Sample, cellData$Clusters)
+cell_counts_df <- as.data.frame.matrix(cell_counts)
+
+# Calculate total cells per sample for normalization
+total_cells_per_sample <- rowSums(cell_counts_df)
+
+# Normalize: (cells in cluster / total cells in sample) * 100
+normalized_counts <- sweep(cell_counts_df, 1, total_cells_per_sample, FUN = "/") * 100
+
+# Convert to long format for statistical analysis
+library(tidyr)
+
+# Add sample names as a column
+normalized_counts$Sample <- rownames(normalized_counts)
+
+# Reshape to long format
+cell_abund_long <- normalized_counts %>%
+  pivot_longer(cols = -Sample, 
+               names_to = "cluster", 
+               values_to = "cellAbund")
+
+# Save the formatted data (no treatment column needed)
+write.csv(cell_abund_long, 
+          "Cell-Abund_Boxplot_by_Sample_2025-10-08.csv", 
+          row.names = FALSE)
+
+# Also save the raw counts for reference
+cell_counts_df$Sample <- rownames(cell_counts_df)
+write.csv(cell_counts_df, 
+          "Cell_Counts_Raw_by_Sample_and_Cluster_2025-10-08.csv", 
+          row.names = FALSE)
+
+# Save normalized percentages in wide format too
+write.csv(normalized_counts, 
+          "Cell-Abund_Normalized_Wide_2025-10-08.csv", 
+          row.names = FALSE)
+
+
+#########################################
+
+
+## Next, calculate statistical differences between sample groups
+
+# A two-stage approach using ANOVA followed by Bonferroni-corrected t-tests is recommended when sample sizes are larger (n ≥ 5-6), multiple treatment groups are compared, and sufficient statistical power exists to withstand stringent multiple testing corrections. With only four samples in our study, this approach would be overly conservative and reduce our ability to detect biologically relevant differences. We therefore used direct pairwise t-tests, interpreting results alongside effect sizes as exploratory findings.
+
+
+# Load required libraries
+library(ggplot2)
+library(viridis)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+
+# Load the CSV file
+boxData <- read.csv("Cell-Abund_Boxplot_by_Sample_2025-10-08.csv")
+
+# Ensure clusters are ordered
+boxData$cluster <- factor(boxData$cluster, levels = sort(unique(boxData$cluster)))
+boxData$Sample <- factor(boxData$Sample)
+
+
+# Summary statistics in wide format
+summary_stats <- boxData %>%
+  group_by(cluster, Sample) %>%
+  summarise(cellAbund_pct = mean(cellAbund), .groups = "drop") %>%
+  pivot_wider(names_from = Sample, values_from = cellAbund_pct)
+print(summary_stats)
+write.csv(summary_stats, "CellAbund_Summary_by_Sample_2025-10-08.csv", row.names = FALSE)
+
+# ============================================
+# PAIRWISE T-TESTS - ALL COMBINATIONS
+# ============================================
+
+# Get sample names
+samples <- sort(unique(as.character(boxData$Sample)))
+cat("Samples:", paste(samples, collapse = ", "), "\n")
+
+# Create all pairwise combinations
+comparisons <- combn(samples, 2, simplify = FALSE)
+cat("Number of pairwise comparisons per cluster:", length(comparisons), "\n")
+cat("Comparisons:\n")
+for(i in 1:length(comparisons)) {
+  cat(sprintf("  %d. %s vs %s\n", i, comparisons[[i]][1], comparisons[[i]][2]))
+}
+cat("\n")
+
+# Function to perform comparison for one cluster
+compare_samples <- function(cluster_data, comp) {
+  s1 <- comp[1]
+  s2 <- comp[2]
+  
+  val1 <- cluster_data$cellAbund[cluster_data$Sample == s1]
+  val2 <- cluster_data$cellAbund[cluster_data$Sample == s2]
+  
+  # Basic stats
+  result <- data.frame(
+    group1 = s1,
+    group2 = s2,
+    n1 = length(val1),
+    n2 = length(val2),
+    mean1 = ifelse(length(val1) > 0, mean(val1), NA),
+    mean2 = ifelse(length(val2) > 0, mean(val2), NA),
+    stringsAsFactors = FALSE
+  )
+  
+  # Calculate differences and fold changes
+  if(!is.na(result$mean1) && !is.na(result$mean2)) {
+    result$diff <- result$mean1 - result$mean2
+    result$fold_change <- result$mean1 / result$mean2
+    result$log2FC <- log2(result$mean1 / result$mean2)
+  } else {
+    result$diff <- NA
+    result$fold_change <- NA
+    result$log2FC <- NA
+  }
+  
+  # Perform t-test
+  if(length(val1) > 0 && length(val2) > 0) {
+    tt <- tryCatch({
+      suppressWarnings(t.test(val1, val2))
+    }, error = function(e) {
+      list(p.value = NA, statistic = NA, parameter = NA)
+    })
+    result$statistic <- ifelse(!is.null(tt$statistic), as.numeric(tt$statistic), NA)
+    result$p.value <- tt$p.value
+  } else {
+    result$statistic <- NA
+    result$p.value <- NA
+  }
+  
+  return(result)
+}
+
+# Apply to all clusters
+all_results <- boxData %>%
+  group_by(cluster) %>%
+  group_modify(~ {
+    bind_rows(lapply(comparisons, function(comp) compare_samples(.x, comp)))
+  }) %>%
+  ungroup()
+
+# Add significance levels
+all_results <- all_results %>%
+  mutate(
+    p.signif = case_when(
+      is.na(p.value) ~ "NA",
+      p.value < 0.001 ~ "***",
+      p.value < 0.01 ~ "**",
+      p.value < 0.05 ~ "*",
+      p.value < 0.10 ~ ".",
+      TRUE ~ "ns"
+    )
+  )
+
+# Print results
+cat("\n=== Pairwise t-Test Results ===\n")
+print(head(all_results, 20))
+cat("\n... (showing first 20 rows)\n\n")
+
+# Verify expected number of rows
+n_clusters <- length(unique(boxData$cluster))
+expected_rows <- n_clusters * length(comparisons)
+actual_rows <- nrow(all_results)
+
+cat("Expected rows:", expected_rows, "(", n_clusters, "clusters ×", length(comparisons), "comparisons )\n")
+cat("Actual rows:", actual_rows, "\n")
+
+if(actual_rows == expected_rows) {
+  cat("✓ All comparisons completed successfully!\n\n")
+} else {
+  cat("⚠ Warning: Row count mismatch. Check for missing data.\n\n")
+}
+
+# Save results
+write.csv(all_results, 
+          "CellAbund_Pairwise_tTests_by_Sample_2025-10-08.csv", 
+          row.names = FALSE)
+
+
+# Summary of significant results
+sig_summary <- all_results %>%
+  group_by(p.signif) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(p.signif)
+
+cat("=== Significance Summary ===\n")
+print(sig_summary)
+cat("\n")
+
+# Count significant results per cluster
+sig_per_cluster <- all_results %>%
+  filter(p.value < 0.05) %>%
+  group_by(cluster) %>%
+  summarise(n_sig_comparisons = n(), .groups = "drop") %>%
+  arrange(desc(n_sig_comparisons))
+
+if(nrow(sig_per_cluster) > 0) {
+  cat("=== Clusters with Significant Differences (p < 0.05) ===\n")
+  print(sig_per_cluster)
+  cat("\n")
+  write.csv(sig_per_cluster, 
+            "CellAbund_SignificantClusters_Summary_2025-10-08.csv", 
+            row.names = FALSE)
+} else {
+  cat("No significant differences found at p < 0.05\n\n")
+}
+
+# Create p-value matrix (wide format) for easier viewing
+p_value_matrix <- all_results %>%
+  mutate(comparison = paste0(group1, "_vs_", group2)) %>%
+  select(cluster, comparison, p.value) %>%
+  pivot_wider(names_from = comparison, values_from = p.value)
+
+write.csv(p_value_matrix, 
+          "CellAbund_pValues_Matrix_2025-10-08.csv", 
+          row.names = FALSE)
+
+# ============================================
+# VISUALIZATION
+# ============================================
+
+
+# Prepare comparison list for plotting (p < 0.05)
+sig_comparisons_list <- all_results %>%
+  filter(p.value < 0.05) %>%
+  group_by(cluster) %>%
+  summarise(comparisons = list(purrr::map2(group1, group2, c)), .groups = "drop") %>%
+  {setNames(.$comparisons, .$cluster)}
+
+# Calculate y-positions for plot
+y_positions <- boxData %>%
+  group_by(cluster) %>%
+  summarise(max_y = max(cellAbund) * 1.5, .groups = "drop")
+
+# Create plot function
+create_comparison_plot <- function(p_threshold = 0.05) {
+  
+  # Filter comparisons based on threshold
+  comparisons_to_plot <- all_results %>%
+    filter(p.value < p_threshold) %>%
+    group_by(cluster) %>%
+    summarise(comparisons = list(purrr::map2(group1, group2, c)), .groups = "drop") %>%
+    {setNames(.$comparisons, .$cluster)}
+  
+  # Create base plot with bars
+  p <- ggplot(boxData, aes(x = Sample, y = cellAbund, fill = Sample)) +
+    geom_bar(stat = "identity", alpha = 0.8, width = 0.7) +
+    scale_fill_viridis_d(option = "plasma", end = 0.9) +
+    facet_wrap(~cluster, scales = "free_y", ncol = 4)
+  
+  # Add significance brackets for clusters with significant comparisons
+  for(cluster_name in names(comparisons_to_plot)) {
+    if(length(comparisons_to_plot[[cluster_name]]) > 0) {
+      cluster_data <- boxData %>% filter(cluster == cluster_name)
+      cluster_y_pos <- y_positions$max_y[y_positions$cluster == cluster_name]
+      
+      # Add brackets
+      p <- p + stat_compare_means(
+        data = cluster_data,
+        comparisons = comparisons_to_plot[[cluster_name]],
+        method = "t.test",
+        label = "p.format",
+        label.y = cluster_y_pos,
+        bracket.size = 0.5,
+        step.increase = 0.12,
+        tip.length = 0.02,
+        size = 2.5
+      )
+    }
+  }
+  
+  # Styling
+  p <- p + labs(
+    fill = "Sample",
+    y = "Normalized Cell Abundance (%)",
+    x = "Sample",
+    title = paste0("Cell Abundance by Cluster (p < ", p_threshold, ")")
+  ) +
+    theme_minimal() +
+    theme(
+      panel.grid.major = element_line(color = "gray90"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+      strip.background = element_rect(fill = "gray85", color = "black", linewidth = 0.5),
+      strip.text = element_text(color = "black", size = 10, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+      axis.text.y = element_text(size = 9),
+      axis.title = element_text(size = 11, face = "bold"),
+      legend.position = "right",
+      plot.title = element_text(size = 13, face = "bold", hjust = 0.5)
+    )
+  
+  return(p)
+}
+
+# Create plots with different thresholds
+p1 <- create_comparison_plot(p_threshold = 0.05)
+p2 <- create_comparison_plot(p_threshold = 0.10)
+
+# Save plots
+ggsave("CellAbund_BarPlot_p05_by_Sample_2025-10-08.pdf",
+       plot = p1, device = "pdf", width = 16, height = 10, dpi = 300)
+cat("Plot saved: CellAbund_BarPlot_p05_by_Sample_2025-10-08.pdf\n")
+
+ggsave("CellAbund_BarPlot_p10_by_Sample_2025-10-08.pdf",
+       plot = p2, device = "pdf", width = 16, height = 10, dpi = 300)
+cat("Plot saved: CellAbund_BarPlot_p10_by_Sample_2025-10-08.pdf\n")
+
+ggsave("CellAbund_BarPlot_by_Sample_2025-10-08.jpg",
+       plot = p1, device = "jpg", width = 16, height = 10, dpi = 300)
+cat("Plot saved: CellAbund_BarPlot_by_Sample_2025-10-08.jpg\n\n")
+
+
+
+#####################################################
+#####################################################
+#####################################################
