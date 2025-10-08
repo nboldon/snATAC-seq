@@ -369,3 +369,86 @@ if(length(common_clusters_s3s4) > 0) {
   }
 }
 
+
+#####################################################
+
+
+## Combine results by cluster to compare pairwise comparison results
+
+
+# Get all unique clusters
+all_clusters <- unique(projP_3$Clusters)
+
+# Loop through each cluster and combine all pairwise comparisons for that cluster
+for(cluster in all_clusters) {
+  
+  print(paste("Combining data for", cluster))
+  
+  # List to store dataframes
+  cluster_data_list <- list()
+  
+  # Sample1 vs Sample2
+  file_s1s2 <- paste0("sample1_vs_sample2_", cluster, "_markers.csv")
+  if(file.exists(file_s1s2)) {
+    df_s1s2 <- read.csv(file_s1s2, row.names = 1)
+    df_s1s2$Comparison <- "sample1_vs_sample2"
+    cluster_data_list[["s1s2"]] <- df_s1s2
+  }
+  
+  # Sample1 vs Sample3
+  file_s1s3 <- paste0("sample1_vs_sample3_", cluster, "_markers.csv")
+  if(file.exists(file_s1s3)) {
+    df_s1s3 <- read.csv(file_s1s3, row.names = 1)
+    df_s1s3$Comparison <- "sample1_vs_sample3"
+    cluster_data_list[["s1s3"]] <- df_s1s3
+  }
+  
+  # Sample1 vs Sample4
+  file_s1s4 <- paste0("sample1_vs_sample4_", cluster, "_markers.csv")
+  if(file.exists(file_s1s4)) {
+    df_s1s4 <- read.csv(file_s1s4, row.names = 1)
+    df_s1s4$Comparison <- "sample1_vs_sample4"
+    cluster_data_list[["s1s4"]] <- df_s1s4
+  }
+  
+  # Sample2 vs Sample3
+  file_s2s3 <- paste0("sample2_vs_sample3_", cluster, "_markers.csv")
+  if(file.exists(file_s2s3)) {
+    df_s2s3 <- read.csv(file_s2s3, row.names = 1)
+    df_s2s3$Comparison <- "sample2_vs_sample3"
+    cluster_data_list[["s2s3"]] <- df_s2s3
+  }
+  
+  # Sample2 vs Sample4
+  file_s2s4 <- paste0("sample2_vs_sample4_", cluster, "_markers.csv")
+  if(file.exists(file_s2s4)) {
+    df_s2s4 <- read.csv(file_s2s4, row.names = 1)
+    df_s2s4$Comparison <- "sample2_vs_sample4"
+    cluster_data_list[["s2s4"]] <- df_s2s4
+  }
+  
+  # Sample3 vs Sample4
+  file_s3s4 <- paste0("sample3_vs_sample4_", cluster, "_markers.csv")
+  if(file.exists(file_s3s4)) {
+    df_s3s4 <- read.csv(file_s3s4, row.names = 1)
+    df_s3s4$Comparison <- "sample3_vs_sample4"
+    cluster_data_list[["s3s4"]] <- df_s3s4
+  }
+  
+  # Combine all dataframes for this cluster
+  if(length(cluster_data_list) > 0) {
+    combined_df <- do.call(rbind, cluster_data_list)
+    
+    # Save combined file
+    write.csv(combined_df, 
+              file = paste0(cluster, "_all_comparisons_combined.csv"), 
+              row.names = TRUE)
+    
+    print(paste("  Combined", length(cluster_data_list), "comparisons with", 
+                nrow(combined_df), "total markers"))
+  } else {
+    print(paste("  No comparison files found for", cluster))
+  }
+}
+
+print("Done combining all clusters!")
