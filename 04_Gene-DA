@@ -1,19 +1,16 @@
-#########################################
-#########################################
-
 ## Heatmaps for marker genes
 
 
 # Top 3 cell type-specific marker genes by category:
 #topMarkerGenes <- c(#Glutamatergic "Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
 #GABAergic "Gad1", "Pvalb", "Vip", "Sst", "Reln",
-#Microglia "C1qa, Cc14", "Cd14", "Cx3cr1", "Trem2",
+#Microglia "C1qa, Ccl4", "Cd14", "Cx3cr1", "Trem2",
 #Oligodendrocytes "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
 #Astrocytes "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
 #Endo-vasc "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
 topMarkerGenes <- c("Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
                     "Gad1", "Pvalb", "Vip", "Sst", "Reln",
-                    "C1qa, Cc14", "Cd14", "Cx3cr1", "Trem2",
+                    "C1qa, Ccl4", "Cd14", "Cx3cr1", "Trem2",
                     "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
                     "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
                     "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
@@ -29,10 +26,142 @@ heatmapGS <- plotMarkerHeatmap(
 ComplexHeatmap::draw(heatmapGS, heatmap_legend_side = "bot", annotation_legend_side = "bot")
 
 # To save the heatmap
-plotPDF(heatmapGS, name = "Top_Cell-Type-Markers_Heatmap_2025-10-07", width = 8, height = 6, ArchRProj = projP_2, addDOC = FALSE)
+plotPDF(heatmapGS, name = "Top_Cell-Type-Markers_Heatmap_2025-10-07", width = 8, height = 6, ArchRProj = projP_3, addDOC = FALSE)
 
 
 #####################################################
+
+
+## To create a heatmap that shows only the genes of interest
+
+# Define genes in the order you want them to appear (by cell type)
+topMarkerGenes <- c(
+  # Glutamatergic
+  "Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8",
+  # GABAergic
+  "Gad1", "Pvalb", "Vip", "Sst", "Reln",
+  # Microglia
+  "C1qa", "Ccl4", "Cd14", "Cx3cr1", "Trem2",
+  # Oligodendrocytes
+  "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
+  # Astrocytes
+  "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
+  # Endo-vasc
+  "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4"
+)
+
+# Subset and reorder
+genesInMarker <- rowData(markerGS)$name
+genesToKeep <- which(genesInMarker %in% topMarkerGenes)
+markerGS_filtered <- markerGS[genesToKeep, ]
+
+genesInFiltered <- rowData(markerGS_filtered)$name
+geneOrder <- match(topMarkerGenes, genesInFiltered)
+geneOrder <- geneOrder[!is.na(geneOrder)]
+markerGS_filtered <- markerGS_filtered[geneOrder, ]
+
+# Try with binaryClusterRows = FALSE
+heatmapGS <- plotMarkerHeatmap(
+  seMarker = markerGS_filtered,
+  cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25",
+  labelMarkers = topMarkerGenes,
+  transpose = TRUE,
+  binaryClusterRows = FALSE,
+  clusterCols = FALSE
+)
+
+# Plot and save
+ComplexHeatmap::draw(heatmapGS, heatmap_legend_side = "bot", annotation_legend_side = "bot")
+plotPDF(heatmapGS, name = "Top-Only_Cell-Type-Markers_Heatmap_2025-10-07", 
+        width = 8, height = 6, ArchRProj = projP_3, addDOC = FALSE)
+
+
+#####################################################
+
+## To create a heatmap that contains only genes of interest, organized by cell type
+
+library(ComplexHeatmap)
+library(circlize)
+
+# Define genes in the order you want them to appear (by cell type)
+topMarkerGenes <- c(
+  # Glutamatergic
+  "Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8",
+  # GABAergic
+  "Gad1", "Pvalb", "Vip", "Sst", "Reln",
+  # Microglia
+  "C1qa", "Ccl4", "Cd14", "Cx3cr1", "Trem2",
+  # Oligodendrocytes
+  "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
+  # Astrocytes
+  "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
+  # Endo-vasc
+  "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4"
+)
+
+# Get marker data
+markerList <- getMarkers(markerGS, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+
+# Extract Log2FC values for your genes of interest
+log2fc_matrix <- matrix(NA, nrow = length(topMarkerGenes), ncol = length(markerList))
+cluster_names <- names(markerList)
+
+for(i in 1:length(cluster_names)) {
+  cluster <- cluster_names[i]
+  cluster_data <- markerList[[cluster]]
+  
+  # For each gene, find its Log2FC value
+  for(j in 1:length(topMarkerGenes)) {
+    gene <- topMarkerGenes[j]
+    gene_idx <- which(cluster_data$name == gene)
+    if(length(gene_idx) > 0) {
+      log2fc_matrix[j, i] <- cluster_data$Log2FC[gene_idx[1]]
+    }
+  }
+}
+
+# Set row and column names
+rownames(log2fc_matrix) <- topMarkerGenes
+colnames(log2fc_matrix) <- cluster_names
+
+# Replace NA with 0
+log2fc_matrix[is.na(log2fc_matrix)] <- 0
+
+# Create row annotation for cell types
+cell_type <- c(rep("Glutamatergic", 5), rep("GABAergic", 5), 
+               rep("Microglia", 5), rep("Oligodendrocytes", 5),
+               rep("Astrocytes", 5), rep("Endo-vasc", 5))
+
+row_ha <- rowAnnotation(
+  CellType = cell_type,
+  col = list(CellType = c("Glutamatergic" = "#E41A1C", 
+                          "GABAergic" = "#377EB8",
+                          "Microglia" = "#4DAF4A",
+                          "Oligodendrocytes" = "#984EA3",
+                          "Astrocytes" = "#FF7F00",
+                          "Endo-vasc" = "#A65628"))
+)
+
+# Create heatmap with no row clustering
+heatmapGS <- Heatmap(
+  log2fc_matrix,
+  name = "Log2FC",
+  cluster_rows = FALSE,  # Keep your gene order
+  cluster_columns = TRUE,  # Cluster cell types/clusters
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  col = colorRamp2(c(-2, 0, 2), c("blue", "white", "red")),
+  row_names_side = "left",
+  column_names_side = "bottom",
+  left_annotation = row_ha
+)
+
+# Draw and save
+draw(heatmapGS, heatmap_legend_side = "bot", annotation_legend_side = "bot")
+plotPDF(heatmapGS, name = "Top-Only_Cell-Type-Markers_Heatmap_Custom_2025-10-07", 
+        width = 10, height = 8, ArchRProj = projP_3, addDOC = FALSE)
+
+
 #####################################################
 #####################################################
 
@@ -42,21 +171,19 @@ plotPDF(heatmapGS, name = "Top_Cell-Type-Markers_Heatmap_2025-10-07", width = 8,
 
 topMarkerGenes <- c("Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
                     "Gad1", "Pvalb", "Vip", "Sst", "Reln",
-                    "Cd14", "Cx3cr1", "Trem2",
+                    "Cdl4", "Cx3cr1", "Trem2",
                     "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
                     "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
                     "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
 
 p <- plotEmbedding(
-  ArchRProj = projP_2,
+  ArchRProj = projP_3,
   colorBy = "GeneScoreMatrix",
   name = topMarkerGenes,
   embedding = "UMAP",
   quantCut = c(0.01, 0.95),
   imputeWeights = NULL
 )
-
-# ERROR: "C1qa, Cc14" does not exist
 
 
 #To plot a specific gene
@@ -97,20 +224,19 @@ ggsave("UMAP-MarkerGenes-WO-Imputation_2025-10-07.pdf",
 #The impute weights can also be passed to plotEmbedding() when plotting gene scores overlayed on the UMAP embedding
 topMarkerGenes <- c("Neurod1", "Neurod6", "Satb2", "Slc17a6", "Slc17a8", 
                     "Gad1", "Pvalb", "Vip", "Sst", "Reln",
-                    "Cd14", "Cx3cr1", "Trem2",
+                    "Cdl4", "Cx3cr1", "Trem2",
                     "Mag", "Mbp", "Olig1", "Olig2", "Opalin",
                     "Aqp4", "Cbs", "Dio2", "Gfap", "Ppp1r3c",
                     "Anpep", "Cldn5", "Flt1", "Fn1", "Slco1a4")
 
 p <- plotEmbedding(
-  ArchRProj = projP_2,
+  ArchRProj = projP_3,
   colorBy = "GeneScoreMatrix",
   name = topMarkerGenes,
   embedding = "UMAP",
   imputeWeights = getImputeWeights(projP_3)
 )
 
-# ERROR: "C1qa, Cc14" does not exist
 
 #To subset the plot list to select a specific gene
 p$Olig2
@@ -145,9 +271,4 @@ ggsave("UMAP-MarkerGenes-W-Imputation_2025-10-07.pdf",
 #####################################################
 #####################################################
 #####################################################
-
-
-## Save projP_2
-
-saveArchRProject(ArchRProj = projP_2, outputDirectory = "/Volumes/DataBox2/Save-ProjP_2", load = FALSE)
 
