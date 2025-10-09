@@ -3,7 +3,7 @@
 ###############################################
 ###############################################
 ## CLUSTER-SPECIFIC PEAK ANALYSIS BY SAMPLE
-## Using Existing PeakMatrix 
+## Using Existing PeakMatrix (No MACS2 Required)
 ###############################################
 ###############################################
 
@@ -11,6 +11,8 @@ library(ArchR)
 library(ggplot2)
 library(dplyr)
 
+# Load project
+projP_3 <- loadArchRProject(path = "/Volumes/DataBox2/Save-ProjP_3", force = FALSE, showLogo = FALSE)
 
 ###############################################
 ## 1. SETUP: Rename samples and create identifiers
@@ -54,7 +56,6 @@ print("\nUsing existing PeakMatrix for sample-cluster comparisons")
 peakSet <- getPeakSet(projP_3)
 print(paste("Total peaks in dataset:", length(peakSet)))
 
-
 ###############################################
 ## 3. HELPER FUNCTIONS
 ###############################################
@@ -70,7 +71,6 @@ get_common_clusters <- function(sample1_name, sample2_name) {
   common <- intersect(sample1_clusters, sample2_clusters)
   return(common)
 }
-
 
 ###############################################
 ## 4. PEAK COMPARISON FUNCTION
@@ -148,9 +148,9 @@ create_peak_volcano <- function(markerPeaks, s1, s2, cluster, sig_markers) {
     
     if(nrow(volcano_data) > 10) {
       
-      # Add significance category
+      # Add significance category matching the conservative thresholds
       volcano_data$Significant <- ifelse(
-        volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+        volcano_data$FDR <= 0.01 & abs(volcano_data$Log2FC) >= 1.25,
         "Significant",
         "Not Significant"
       )
@@ -159,8 +159,8 @@ create_peak_volcano <- function(markerPeaks, s1, s2, cluster, sig_markers) {
       pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
         geom_point(alpha = 0.6, size = 1.5) +
         scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
-        geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
-        geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+        geom_hline(yintercept = -log10(0.01), linetype = "dashed", color = "blue", linewidth = 0.5) +
+        geom_vline(xintercept = c(-1.25, 1.25), linetype = "dashed", color = "blue", linewidth = 0.5) +
         labs(
           title = paste0(s1, " vs ", s2, " - ", cluster, " (Peaks)"),
           x = "Log2 Fold Change",
@@ -195,7 +195,6 @@ create_peak_volcano <- function(markerPeaks, s1, s2, cluster, sig_markers) {
     }
   }
 }
-
 
 ###############################################
 ## 5. RUN ALL PAIRWISE COMPARISONS
@@ -236,7 +235,6 @@ for(pair in sample_pairs) {
 
 # Final cleanup
 while(dev.cur() > 1) dev.off()
-
 
 ###############################################
 ## 6. COMBINE RESULTS BY CLUSTER
@@ -343,8 +341,8 @@ if(nrow(summary_data) > 0) {
   # Stacked bar plot showing up vs down
   summary_long <- summary_data %>%
     tidyr::pivot_longer(cols = c(nUpregulated, nDownregulated),
-                        names_to = "Direction",
-                        values_to = "Count") %>%
+                       names_to = "Direction",
+                       values_to = "Count") %>%
     mutate(Direction = ifelse(Direction == "nUpregulated", "Upregulated", "Downregulated"))
   
   p_direction <- ggplot(summary_long, aes(x = Cluster, y = Count, fill = Direction)) +
@@ -403,8 +401,8 @@ create_peak_heatmap <- function(cluster_name, min_peaks = 20) {
   # This is a simplified version - for full heatmap you'd need the actual peak matrix
   # Saving the data for external visualization
   write.csv(top_peaks, 
-            paste0(cluster_name, "_top50_peaks_for_heatmap.csv"),
-            row.names = TRUE)
+           paste0(cluster_name, "_top50_peaks_for_heatmap.csv"),
+           row.names = TRUE)
   
   return(top_peaks)
 }
@@ -454,6 +452,6 @@ for(cluster in all_clusters) {
 ###############################################
 
 saveArchRProject(ArchRProj = projP_3, 
-                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
-                 load = FALSE)
+                outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                load = FALSE)
 
