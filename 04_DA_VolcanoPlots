@@ -1,0 +1,398 @@
+
+## Differential Gene Accessibility between samples by cluster
+## WITH VOLCANO PLOTS
+
+
+#####################################################
+# SETUP: Rename samples and create sample_cluster identifier
+#####################################################
+
+# Get the current sample names
+sample <- projP_3$Sample
+
+# Rename samples to simpler names
+sample <- gsub("cortex_fresh_v1", "sample1", sample)
+sample <- gsub("cortex_v1-1_chromx", "sample2", sample)
+sample <- gsub("cortex_v2_chromx", "sample3", sample)
+sample <- gsub("cortex_v2_cont", "sample4", sample)
+
+# Check the renaming worked
+unique(sample)
+
+# Add to the project
+projP_3$sample <- sample
+
+# Verify it's there
+table(projP_3$sample)
+
+# Create a combined sample_cluster identifier
+projP_3$sample_cluster <- paste0(projP_3$sample, "_", projP_3$Clusters)
+
+# Check what combinations exist
+table(projP_3$sample_cluster)
+
+# Get all unique clusters
+all_clusters <- unique(projP_3$Clusters)
+print(all_clusters)
+
+
+#####################################################
+# Helper function to find common clusters between two samples
+#####################################################
+
+get_common_clusters <- function(sample1_name, sample2_name) {
+  sample1_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample1_name])
+  sample2_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample2_name])
+  
+  # Extract cluster names
+  sample1_clusters <- gsub(paste0(sample1_name, "_"), "", sample1_combinations)
+  sample2_clusters <- gsub(paste0(sample2_name, "_"), "", sample2_combinations)
+  
+  # Find common clusters
+  common <- intersect(sample1_clusters, sample2_clusters)
+  return(common)
+}
+
+
+#####################################################
+#####################################################
+# Sample1 vs Sample2 - by cluster with volcano plots
+#####################################################
+
+common_clusters_s1s2 <- get_common_clusters("sample1", "sample2")
+print(paste("Common clusters between sample1 and sample2:", paste(common_clusters_s1s2, collapse=", ")))
+
+if(length(common_clusters_s1s2) > 0) {
+  
+  # Run marker test
+  markerTest_s1s2 <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "GeneScoreMatrix",
+    groupBy = "sample_cluster",
+    testMethod = "wilcoxon",
+    bias = c("TSSEnrichment", "log10(nFrags)"),
+    useGroups = paste0("sample1_", common_clusters_s1s2),
+    bgdGroups = paste0("sample2_", common_clusters_s1s2)
+  )
+  
+  # Get marker list
+  markerList_s1s2 <- getMarkers(markerTest_s1s2, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+  
+  # Save CSV files and create volcano plots for each cluster
+  for(cluster in common_clusters_s1s2) {
+    cluster_name <- paste0("sample1_", cluster)
+    
+    if(cluster_name %in% names(markerList_s1s2)) {
+      cluster_markers <- markerList_s1s2[[cluster_name]]
+      
+      if(nrow(cluster_markers) > 0) {
+        # Save CSV
+        write.csv(cluster_markers, 
+                  file = paste0("sample1_vs_sample2_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        
+        print(paste("Sample1 vs Sample2,", cluster, "- markers:", nrow(cluster_markers)))
+        
+        # Create volcano plot
+        pv <- plotMarkers(
+          seMarker = markerTest_s1s2, 
+          name = cluster_name,
+          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
+          plotAs = "Volcano"
+        )
+        
+        # Save volcano plot
+        plotPDF(pv, 
+                name = paste0("Sample1_vs_Sample2_", cluster, "_Volcano_2025-10-09"), 
+                width = 5, 
+                height = 5, 
+                ArchRProj = projP_3, 
+                addDOC = FALSE)
+        
+        print(paste("  Volcano plot saved for", cluster))
+      }
+    }
+  }
+}
+
+
+#####################################################
+# Sample1 vs Sample3 - by cluster with volcano plots
+#####################################################
+
+common_clusters_s1s3 <- get_common_clusters("sample1", "sample3")
+print(paste("Common clusters between sample1 and sample3:", paste(common_clusters_s1s3, collapse=", ")))
+
+if(length(common_clusters_s1s3) > 0) {
+  
+  markerTest_s1s3 <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "GeneScoreMatrix",
+    groupBy = "sample_cluster",
+    testMethod = "wilcoxon",
+    bias = c("TSSEnrichment", "log10(nFrags)"),
+    useGroups = paste0("sample1_", common_clusters_s1s3),
+    bgdGroups = paste0("sample3_", common_clusters_s1s3)
+  )
+  
+  markerList_s1s3 <- getMarkers(markerTest_s1s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+  
+  for(cluster in common_clusters_s1s3) {
+    cluster_name <- paste0("sample1_", cluster)
+    
+    if(cluster_name %in% names(markerList_s1s3)) {
+      cluster_markers <- markerList_s1s3[[cluster_name]]
+      
+      if(nrow(cluster_markers) > 0) {
+        write.csv(cluster_markers, 
+                  file = paste0("sample1_vs_sample3_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        
+        print(paste("Sample1 vs Sample3,", cluster, "- markers:", nrow(cluster_markers)))
+        
+        pv <- plotMarkers(
+          seMarker = markerTest_s1s3, 
+          name = cluster_name,
+          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
+          plotAs = "Volcano"
+        )
+        
+        plotPDF(pv, 
+                name = paste0("Sample1_vs_Sample3_", cluster, "_Volcano_2025-10-09"), 
+                width = 5, 
+                height = 5, 
+                ArchRProj = projP_3, 
+                addDOC = FALSE)
+        
+        print(paste("  Volcano plot saved for", cluster))
+      }
+    }
+  }
+}
+
+
+#####################################################
+# Sample1 vs Sample4 - by cluster with volcano plots
+#####################################################
+
+common_clusters_s1s4 <- get_common_clusters("sample1", "sample4")
+print(paste("Common clusters between sample1 and sample4:", paste(common_clusters_s1s4, collapse=", ")))
+
+if(length(common_clusters_s1s4) > 0) {
+  
+  markerTest_s1s4 <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "GeneScoreMatrix",
+    groupBy = "sample_cluster",
+    testMethod = "wilcoxon",
+    bias = c("TSSEnrichment", "log10(nFrags)"),
+    useGroups = paste0("sample1_", common_clusters_s1s4),
+    bgdGroups = paste0("sample4_", common_clusters_s1s4)
+  )
+  
+  markerList_s1s4 <- getMarkers(markerTest_s1s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+  
+  for(cluster in common_clusters_s1s4) {
+    cluster_name <- paste0("sample1_", cluster)
+    
+    if(cluster_name %in% names(markerList_s1s4)) {
+      cluster_markers <- markerList_s1s4[[cluster_name]]
+      
+      if(nrow(cluster_markers) > 0) {
+        write.csv(cluster_markers, 
+                  file = paste0("sample1_vs_sample4_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        
+        print(paste("Sample1 vs Sample4,", cluster, "- markers:", nrow(cluster_markers)))
+        
+        pv <- plotMarkers(
+          seMarker = markerTest_s1s4, 
+          name = cluster_name,
+          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
+          plotAs = "Volcano"
+        )
+        
+        plotPDF(pv, 
+                name = paste0("Sample1_vs_Sample4_", cluster, "_Volcano_2025-10-09"), 
+                width = 5, 
+                height = 5, 
+                ArchRProj = projP_3, 
+                addDOC = FALSE)
+        
+        print(paste("  Volcano plot saved for", cluster))
+      }
+    }
+  }
+}
+
+
+#####################################################
+# Sample2 vs Sample3 - by cluster with volcano plots
+#####################################################
+
+common_clusters_s2s3 <- get_common_clusters("sample2", "sample3")
+print(paste("Common clusters between sample2 and sample3:", paste(common_clusters_s2s3, collapse=", ")))
+
+if(length(common_clusters_s2s3) > 0) {
+  
+  markerTest_s2s3 <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "GeneScoreMatrix",
+    groupBy = "sample_cluster",
+    testMethod = "wilcoxon",
+    bias = c("TSSEnrichment", "log10(nFrags)"),
+    useGroups = paste0("sample2_", common_clusters_s2s3),
+    bgdGroups = paste0("sample3_", common_clusters_s2s3)
+  )
+  
+  markerList_s2s3 <- getMarkers(markerTest_s2s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+  
+  for(cluster in common_clusters_s2s3) {
+    cluster_name <- paste0("sample2_", cluster)
+    
+    if(cluster_name %in% names(markerList_s2s3)) {
+      cluster_markers <- markerList_s2s3[[cluster_name]]
+      
+      if(nrow(cluster_markers) > 0) {
+        write.csv(cluster_markers, 
+                  file = paste0("sample2_vs_sample3_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        
+        print(paste("Sample2 vs Sample3,", cluster, "- markers:", nrow(cluster_markers)))
+        
+        pv <- plotMarkers(
+          seMarker = markerTest_s2s3, 
+          name = cluster_name,
+          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
+          plotAs = "Volcano"
+        )
+        
+        plotPDF(pv, 
+                name = paste0("Sample2_vs_Sample3_", cluster, "_Volcano_2025-10-09"), 
+                width = 5, 
+                height = 5, 
+                ArchRProj = projP_3, 
+                addDOC = FALSE)
+        
+        print(paste("  Volcano plot saved for", cluster))
+      }
+    }
+  }
+}
+
+
+#####################################################
+# Sample2 vs Sample4 - by cluster with volcano plots
+#####################################################
+
+common_clusters_s2s4 <- get_common_clusters("sample2", "sample4")
+print(paste("Common clusters between sample2 and sample4:", paste(common_clusters_s2s4, collapse=", ")))
+
+if(length(common_clusters_s2s4) > 0) {
+  
+  markerTest_s2s4 <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "GeneScoreMatrix",
+    groupBy = "sample_cluster",
+    testMethod = "wilcoxon",
+    bias = c("TSSEnrichment", "log10(nFrags)"),
+    useGroups = paste0("sample2_", common_clusters_s2s4),
+    bgdGroups = paste0("sample4_", common_clusters_s2s4)
+  )
+  
+  markerList_s2s4 <- getMarkers(markerTest_s2s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+  
+  for(cluster in common_clusters_s2s4) {
+    cluster_name <- paste0("sample2_", cluster)
+    
+    if(cluster_name %in% names(markerList_s2s4)) {
+      cluster_markers <- markerList_s2s4[[cluster_name]]
+      
+      if(nrow(cluster_markers) > 0) {
+        write.csv(cluster_markers, 
+                  file = paste0("sample2_vs_sample4_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        
+        print(paste("Sample2 vs Sample4,", cluster, "- markers:", nrow(cluster_markers)))
+        
+        pv <- plotMarkers(
+          seMarker = markerTest_s2s4, 
+          name = cluster_name,
+          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
+          plotAs = "Volcano"
+        )
+        
+        plotPDF(pv, 
+                name = paste0("Sample2_vs_Sample4_", cluster, "_Volcano_2025-10-09"), 
+                width = 5, 
+                height = 5, 
+                ArchRProj = projP_3, 
+                addDOC = FALSE)
+        
+        print(paste("  Volcano plot saved for", cluster))
+      }
+    }
+  }
+}
+
+
+#####################################################
+# Sample3 vs Sample4 - by cluster with volcano plots
+#####################################################
+
+common_clusters_s3s4 <- get_common_clusters("sample3", "sample4")
+print(paste("Common clusters between sample3 and sample4:", paste(common_clusters_s3s4, collapse=", ")))
+
+if(length(common_clusters_s3s4) > 0) {
+  
+  markerTest_s3s4 <- getMarkerFeatures(
+    ArchRProj = projP_3,
+    useMatrix = "GeneScoreMatrix",
+    groupBy = "sample_cluster",
+    testMethod = "wilcoxon",
+    bias = c("TSSEnrichment", "log10(nFrags)"),
+    useGroups = paste0("sample3_", common_clusters_s3s4),
+    bgdGroups = paste0("sample4_", common_clusters_s3s4)
+  )
+  
+  markerList_s3s4 <- getMarkers(markerTest_s3s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+  
+  for(cluster in common_clusters_s3s4) {
+    cluster_name <- paste0("sample3_", cluster)
+    
+    if(cluster_name %in% names(markerList_s3s4)) {
+      cluster_markers <- markerList_s3s4[[cluster_name]]
+      
+      if(nrow(cluster_markers) > 0) {
+        write.csv(cluster_markers, 
+                  file = paste0("sample3_vs_sample4_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        
+        print(paste("Sample3 vs Sample4,", cluster, "- markers:", nrow(cluster_markers)))
+        
+        pv <- plotMarkers(
+          seMarker = markerTest_s3s4, 
+          name = cluster_name,
+          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
+          plotAs = "Volcano"
+        )
+        
+        plotPDF(pv, 
+                name = paste0("Sample3_vs_Sample4_", cluster, "_Volcano_2025-10-09"), 
+                width = 5, 
+                height = 5, 
+                ArchRProj = projP_3, 
+                addDOC = FALSE)
+        
+        print(paste("  Volcano plot saved for", cluster))
+      }
+    }
+  }
+}
+
+print("Done! All cluster-specific volcano plots have been created.")
+
+
+#####################################################
+#####################################################
+#####################################################
