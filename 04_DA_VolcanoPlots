@@ -1,6 +1,11 @@
 
+#####################################################
+#####################################################
+#####################################################
+
+
 ## Differential Gene Accessibility between samples by cluster
-## WITH VOLCANO PLOTS
+## WITH CLUSTER-SPECIFIC VOLCANO PLOTS (WORKING VERSION)
 
 
 #####################################################
@@ -55,6 +60,15 @@ get_common_clusters <- function(sample1_name, sample2_name) {
 
 
 #####################################################
+# Load required library
+#####################################################
+
+library(ggplot2)
+
+# Close any open devices before starting
+while(dev.cur() > 1) dev.off()
+
+
 #####################################################
 # Sample1 vs Sample2 - by cluster with volcano plots
 #####################################################
@@ -64,26 +78,29 @@ print(paste("Common clusters between sample1 and sample2:", paste(common_cluster
 
 if(length(common_clusters_s1s2) > 0) {
   
-  # Run marker test
-  markerTest_s1s2 <- getMarkerFeatures(
-    ArchRProj = projP_3,
-    useMatrix = "GeneScoreMatrix",
-    groupBy = "sample_cluster",
-    testMethod = "wilcoxon",
-    bias = c("TSSEnrichment", "log10(nFrags)"),
-    useGroups = paste0("sample1_", common_clusters_s1s2),
-    bgdGroups = paste0("sample2_", common_clusters_s1s2)
-  )
-  
-  # Get marker list
-  markerList_s1s2 <- getMarkers(markerTest_s1s2, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
-  
-  # Save CSV files and create volcano plots for each cluster
   for(cluster in common_clusters_s1s2) {
-    cluster_name <- paste0("sample1_", cluster)
     
-    if(cluster_name %in% names(markerList_s1s2)) {
-      cluster_markers <- markerList_s1s2[[cluster_name]]
+    print(paste("Processing cluster:", cluster))
+    
+    # SUBSET by cluster first
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # Run marker test on the SUBSET using "sample" grouping
+    markerTest_cluster <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample1",
+      bgdGroups = "sample2"
+    )
+    
+    # Get markers for CSV
+    markerList_cluster <- getMarkers(markerTest_cluster, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample1" %in% names(markerList_cluster)) {
+      cluster_markers <- markerList_cluster[["sample1"]]
       
       if(nrow(cluster_markers) > 0) {
         # Save CSV
@@ -91,29 +108,69 @@ if(length(common_clusters_s1s2) > 0) {
                   file = paste0("sample1_vs_sample2_", cluster, "_markers.csv"), 
                   row.names = TRUE)
         
-        print(paste("Sample1 vs Sample2,", cluster, "- markers:", nrow(cluster_markers)))
+        print(paste("  Markers found:", nrow(cluster_markers)))
         
-        # Create volcano plot
-        pv <- plotMarkers(
-          seMarker = markerTest_s1s2, 
-          name = cluster_name,
-          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
-          plotAs = "Volcano"
-        )
+        # Extract ALL results for volcano plot
+        all_results <- getMarkers(markerTest_cluster, cutOff = "FDR <= 1")
         
-        # Save volcano plot
-        plotPDF(pv, 
-                name = paste0("Sample1_vs_Sample2_", cluster, "_Volcano_2025-10-09"), 
-                width = 5, 
-                height = 5, 
-                ArchRProj = projP_3, 
-                addDOC = FALSE)
-        
-        print(paste("  Volcano plot saved for", cluster))
+        if("sample1" %in% names(all_results)) {
+          volcano_data <- all_results[["sample1"]]
+          
+          if(nrow(volcano_data) > 10) {
+            
+            volcano_data$Significant <- ifelse(
+              volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+              "Significant",
+              "Not Significant"
+            )
+            
+            pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
+              geom_point(alpha = 0.6, size = 1.5) +
+              scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
+              geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              labs(
+                title = paste0("Sample1 vs Sample2 - ", cluster),
+                x = "Log2 Fold Change",
+                y = "-Log10(FDR)",
+                subtitle = paste0(nrow(cluster_markers), " significant markers")
+              ) +
+              theme_bw() +
+              theme(
+                legend.position = "top",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.subtitle = element_text(hjust = 0.5, size = 10)
+              )
+            
+            plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+            if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+            
+            tryCatch({
+              ggsave(
+                filename = paste0(plots_dir, "Sample1_vs_Sample2_", cluster, "_Volcano_2025-10-09.pdf"),
+                plot = pv,
+                width = 6,
+                height = 5,
+                device = "pdf"
+              )
+              print(paste("  Volcano plot saved for", cluster))
+            }, error = function(e) {
+              print(paste("  Error saving volcano plot for", cluster, ":", e$message))
+            }, finally = {
+              while(dev.cur() > 1) dev.off()
+            })
+            
+          } else {
+            print(paste("  Skipping volcano plot for", cluster, "- insufficient genes"))
+          }
+        }
       }
     }
   }
 }
+
+# Cleanup after Sample1 vs Sample2
+while(dev.cur() > 1) dev.off()
 
 
 #####################################################
@@ -125,50 +182,93 @@ print(paste("Common clusters between sample1 and sample3:", paste(common_cluster
 
 if(length(common_clusters_s1s3) > 0) {
   
-  markerTest_s1s3 <- getMarkerFeatures(
-    ArchRProj = projP_3,
-    useMatrix = "GeneScoreMatrix",
-    groupBy = "sample_cluster",
-    testMethod = "wilcoxon",
-    bias = c("TSSEnrichment", "log10(nFrags)"),
-    useGroups = paste0("sample1_", common_clusters_s1s3),
-    bgdGroups = paste0("sample3_", common_clusters_s1s3)
-  )
-  
-  markerList_s1s3 <- getMarkers(markerTest_s1s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
-  
   for(cluster in common_clusters_s1s3) {
-    cluster_name <- paste0("sample1_", cluster)
     
-    if(cluster_name %in% names(markerList_s1s3)) {
-      cluster_markers <- markerList_s1s3[[cluster_name]]
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    markerTest_cluster <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample1",
+      bgdGroups = "sample3"
+    )
+    
+    markerList_cluster <- getMarkers(markerTest_cluster, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample1" %in% names(markerList_cluster)) {
+      cluster_markers <- markerList_cluster[["sample1"]]
       
       if(nrow(cluster_markers) > 0) {
         write.csv(cluster_markers, 
                   file = paste0("sample1_vs_sample3_", cluster, "_markers.csv"), 
                   row.names = TRUE)
         
-        print(paste("Sample1 vs Sample3,", cluster, "- markers:", nrow(cluster_markers)))
+        print(paste("  Markers found:", nrow(cluster_markers)))
         
-        pv <- plotMarkers(
-          seMarker = markerTest_s1s3, 
-          name = cluster_name,
-          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
-          plotAs = "Volcano"
-        )
+        all_results <- getMarkers(markerTest_cluster, cutOff = "FDR <= 1")
         
-        plotPDF(pv, 
-                name = paste0("Sample1_vs_Sample3_", cluster, "_Volcano_2025-10-09"), 
-                width = 5, 
-                height = 5, 
-                ArchRProj = projP_3, 
-                addDOC = FALSE)
-        
-        print(paste("  Volcano plot saved for", cluster))
+        if("sample1" %in% names(all_results)) {
+          volcano_data <- all_results[["sample1"]]
+          
+          if(nrow(volcano_data) > 10) {
+            
+            volcano_data$Significant <- ifelse(
+              volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+              "Significant",
+              "Not Significant"
+            )
+            
+            pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
+              geom_point(alpha = 0.6, size = 1.5) +
+              scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
+              geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              labs(
+                title = paste0("Sample1 vs Sample3 - ", cluster),
+                x = "Log2 Fold Change",
+                y = "-Log10(FDR)",
+                subtitle = paste0(nrow(cluster_markers), " significant markers")
+              ) +
+              theme_bw() +
+              theme(
+                legend.position = "top",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.subtitle = element_text(hjust = 0.5, size = 10)
+              )
+            
+            plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+            if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+            
+            tryCatch({
+              ggsave(
+                filename = paste0(plots_dir, "Sample1_vs_Sample3_", cluster, "_Volcano_2025-10-09.pdf"),
+                plot = pv,
+                width = 6,
+                height = 5,
+                device = "pdf"
+              )
+              print(paste("  Volcano plot saved for", cluster))
+            }, error = function(e) {
+              print(paste("  Error saving volcano plot for", cluster, ":", e$message))
+            }, finally = {
+              while(dev.cur() > 1) dev.off()
+            })
+            
+          } else {
+            print(paste("  Skipping volcano plot for", cluster, "- insufficient genes"))
+          }
+        }
       }
     }
   }
 }
+
+while(dev.cur() > 1) dev.off()
 
 
 #####################################################
@@ -180,50 +280,93 @@ print(paste("Common clusters between sample1 and sample4:", paste(common_cluster
 
 if(length(common_clusters_s1s4) > 0) {
   
-  markerTest_s1s4 <- getMarkerFeatures(
-    ArchRProj = projP_3,
-    useMatrix = "GeneScoreMatrix",
-    groupBy = "sample_cluster",
-    testMethod = "wilcoxon",
-    bias = c("TSSEnrichment", "log10(nFrags)"),
-    useGroups = paste0("sample1_", common_clusters_s1s4),
-    bgdGroups = paste0("sample4_", common_clusters_s1s4)
-  )
-  
-  markerList_s1s4 <- getMarkers(markerTest_s1s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
-  
   for(cluster in common_clusters_s1s4) {
-    cluster_name <- paste0("sample1_", cluster)
     
-    if(cluster_name %in% names(markerList_s1s4)) {
-      cluster_markers <- markerList_s1s4[[cluster_name]]
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    markerTest_cluster <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample1",
+      bgdGroups = "sample4"
+    )
+    
+    markerList_cluster <- getMarkers(markerTest_cluster, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample1" %in% names(markerList_cluster)) {
+      cluster_markers <- markerList_cluster[["sample1"]]
       
       if(nrow(cluster_markers) > 0) {
         write.csv(cluster_markers, 
                   file = paste0("sample1_vs_sample4_", cluster, "_markers.csv"), 
                   row.names = TRUE)
         
-        print(paste("Sample1 vs Sample4,", cluster, "- markers:", nrow(cluster_markers)))
+        print(paste("  Markers found:", nrow(cluster_markers)))
         
-        pv <- plotMarkers(
-          seMarker = markerTest_s1s4, 
-          name = cluster_name,
-          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
-          plotAs = "Volcano"
-        )
+        all_results <- getMarkers(markerTest_cluster, cutOff = "FDR <= 1")
         
-        plotPDF(pv, 
-                name = paste0("Sample1_vs_Sample4_", cluster, "_Volcano_2025-10-09"), 
-                width = 5, 
-                height = 5, 
-                ArchRProj = projP_3, 
-                addDOC = FALSE)
-        
-        print(paste("  Volcano plot saved for", cluster))
+        if("sample1" %in% names(all_results)) {
+          volcano_data <- all_results[["sample1"]]
+          
+          if(nrow(volcano_data) > 10) {
+            
+            volcano_data$Significant <- ifelse(
+              volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+              "Significant",
+              "Not Significant"
+            )
+            
+            pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
+              geom_point(alpha = 0.6, size = 1.5) +
+              scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
+              geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              labs(
+                title = paste0("Sample1 vs Sample4 - ", cluster),
+                x = "Log2 Fold Change",
+                y = "-Log10(FDR)",
+                subtitle = paste0(nrow(cluster_markers), " significant markers")
+              ) +
+              theme_bw() +
+              theme(
+                legend.position = "top",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.subtitle = element_text(hjust = 0.5, size = 10)
+              )
+            
+            plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+            if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+            
+            tryCatch({
+              ggsave(
+                filename = paste0(plots_dir, "Sample1_vs_Sample4_", cluster, "_Volcano_2025-10-09.pdf"),
+                plot = pv,
+                width = 6,
+                height = 5,
+                device = "pdf"
+              )
+              print(paste("  Volcano plot saved for", cluster))
+            }, error = function(e) {
+              print(paste("  Error saving volcano plot for", cluster, ":", e$message))
+            }, finally = {
+              while(dev.cur() > 1) dev.off()
+            })
+            
+          } else {
+            print(paste("  Skipping volcano plot for", cluster, "- insufficient genes"))
+          }
+        }
       }
     }
   }
 }
+
+while(dev.cur() > 1) dev.off()
 
 
 #####################################################
@@ -235,50 +378,93 @@ print(paste("Common clusters between sample2 and sample3:", paste(common_cluster
 
 if(length(common_clusters_s2s3) > 0) {
   
-  markerTest_s2s3 <- getMarkerFeatures(
-    ArchRProj = projP_3,
-    useMatrix = "GeneScoreMatrix",
-    groupBy = "sample_cluster",
-    testMethod = "wilcoxon",
-    bias = c("TSSEnrichment", "log10(nFrags)"),
-    useGroups = paste0("sample2_", common_clusters_s2s3),
-    bgdGroups = paste0("sample3_", common_clusters_s2s3)
-  )
-  
-  markerList_s2s3 <- getMarkers(markerTest_s2s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
-  
   for(cluster in common_clusters_s2s3) {
-    cluster_name <- paste0("sample2_", cluster)
     
-    if(cluster_name %in% names(markerList_s2s3)) {
-      cluster_markers <- markerList_s2s3[[cluster_name]]
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    markerTest_cluster <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample2",
+      bgdGroups = "sample3"
+    )
+    
+    markerList_cluster <- getMarkers(markerTest_cluster, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample2" %in% names(markerList_cluster)) {
+      cluster_markers <- markerList_cluster[["sample2"]]
       
       if(nrow(cluster_markers) > 0) {
         write.csv(cluster_markers, 
                   file = paste0("sample2_vs_sample3_", cluster, "_markers.csv"), 
                   row.names = TRUE)
         
-        print(paste("Sample2 vs Sample3,", cluster, "- markers:", nrow(cluster_markers)))
+        print(paste("  Markers found:", nrow(cluster_markers)))
         
-        pv <- plotMarkers(
-          seMarker = markerTest_s2s3, 
-          name = cluster_name,
-          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
-          plotAs = "Volcano"
-        )
+        all_results <- getMarkers(markerTest_cluster, cutOff = "FDR <= 1")
         
-        plotPDF(pv, 
-                name = paste0("Sample2_vs_Sample3_", cluster, "_Volcano_2025-10-09"), 
-                width = 5, 
-                height = 5, 
-                ArchRProj = projP_3, 
-                addDOC = FALSE)
-        
-        print(paste("  Volcano plot saved for", cluster))
+        if("sample2" %in% names(all_results)) {
+          volcano_data <- all_results[["sample2"]]
+          
+          if(nrow(volcano_data) > 10) {
+            
+            volcano_data$Significant <- ifelse(
+              volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+              "Significant",
+              "Not Significant"
+            )
+            
+            pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
+              geom_point(alpha = 0.6, size = 1.5) +
+              scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
+              geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              labs(
+                title = paste0("Sample2 vs Sample3 - ", cluster),
+                x = "Log2 Fold Change",
+                y = "-Log10(FDR)",
+                subtitle = paste0(nrow(cluster_markers), " significant markers")
+              ) +
+              theme_bw() +
+              theme(
+                legend.position = "top",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.subtitle = element_text(hjust = 0.5, size = 10)
+              )
+            
+            plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+            if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+            
+            tryCatch({
+              ggsave(
+                filename = paste0(plots_dir, "Sample2_vs_Sample3_", cluster, "_Volcano_2025-10-09.pdf"),
+                plot = pv,
+                width = 6,
+                height = 5,
+                device = "pdf"
+              )
+              print(paste("  Volcano plot saved for", cluster))
+            }, error = function(e) {
+              print(paste("  Error saving volcano plot for", cluster, ":", e$message))
+            }, finally = {
+              while(dev.cur() > 1) dev.off()
+            })
+            
+          } else {
+            print(paste("  Skipping volcano plot for", cluster, "- insufficient genes"))
+          }
+        }
       }
     }
   }
 }
+
+while(dev.cur() > 1) dev.off()
 
 
 #####################################################
@@ -290,50 +476,93 @@ print(paste("Common clusters between sample2 and sample4:", paste(common_cluster
 
 if(length(common_clusters_s2s4) > 0) {
   
-  markerTest_s2s4 <- getMarkerFeatures(
-    ArchRProj = projP_3,
-    useMatrix = "GeneScoreMatrix",
-    groupBy = "sample_cluster",
-    testMethod = "wilcoxon",
-    bias = c("TSSEnrichment", "log10(nFrags)"),
-    useGroups = paste0("sample2_", common_clusters_s2s4),
-    bgdGroups = paste0("sample4_", common_clusters_s2s4)
-  )
-  
-  markerList_s2s4 <- getMarkers(markerTest_s2s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
-  
   for(cluster in common_clusters_s2s4) {
-    cluster_name <- paste0("sample2_", cluster)
     
-    if(cluster_name %in% names(markerList_s2s4)) {
-      cluster_markers <- markerList_s2s4[[cluster_name]]
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    markerTest_cluster <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample2",
+      bgdGroups = "sample4"
+    )
+    
+    markerList_cluster <- getMarkers(markerTest_cluster, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample2" %in% names(markerList_cluster)) {
+      cluster_markers <- markerList_cluster[["sample2"]]
       
       if(nrow(cluster_markers) > 0) {
         write.csv(cluster_markers, 
                   file = paste0("sample2_vs_sample4_", cluster, "_markers.csv"), 
                   row.names = TRUE)
         
-        print(paste("Sample2 vs Sample4,", cluster, "- markers:", nrow(cluster_markers)))
+        print(paste("  Markers found:", nrow(cluster_markers)))
         
-        pv <- plotMarkers(
-          seMarker = markerTest_s2s4, 
-          name = cluster_name,
-          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
-          plotAs = "Volcano"
-        )
+        all_results <- getMarkers(markerTest_cluster, cutOff = "FDR <= 1")
         
-        plotPDF(pv, 
-                name = paste0("Sample2_vs_Sample4_", cluster, "_Volcano_2025-10-09"), 
-                width = 5, 
-                height = 5, 
-                ArchRProj = projP_3, 
-                addDOC = FALSE)
-        
-        print(paste("  Volcano plot saved for", cluster))
+        if("sample2" %in% names(all_results)) {
+          volcano_data <- all_results[["sample2"]]
+          
+          if(nrow(volcano_data) > 10) {
+            
+            volcano_data$Significant <- ifelse(
+              volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+              "Significant",
+              "Not Significant"
+            )
+            
+            pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
+              geom_point(alpha = 0.6, size = 1.5) +
+              scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
+              geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              labs(
+                title = paste0("Sample2 vs Sample4 - ", cluster),
+                x = "Log2 Fold Change",
+                y = "-Log10(FDR)",
+                subtitle = paste0(nrow(cluster_markers), " significant markers")
+              ) +
+              theme_bw() +
+              theme(
+                legend.position = "top",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.subtitle = element_text(hjust = 0.5, size = 10)
+              )
+            
+            plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+            if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+            
+            tryCatch({
+              ggsave(
+                filename = paste0(plots_dir, "Sample2_vs_Sample4_", cluster, "_Volcano_2025-10-09.pdf"),
+                plot = pv,
+                width = 6,
+                height = 5,
+                device = "pdf"
+              )
+              print(paste("  Volcano plot saved for", cluster))
+            }, error = function(e) {
+              print(paste("  Error saving volcano plot for", cluster, ":", e$message))
+            }, finally = {
+              while(dev.cur() > 1) dev.off()
+            })
+            
+          } else {
+            print(paste("  Skipping volcano plot for", cluster, "- insufficient genes"))
+          }
+        }
       }
     }
   }
 }
+
+while(dev.cur() > 1) dev.off()
 
 
 #####################################################
@@ -345,54 +574,95 @@ print(paste("Common clusters between sample3 and sample4:", paste(common_cluster
 
 if(length(common_clusters_s3s4) > 0) {
   
-  markerTest_s3s4 <- getMarkerFeatures(
-    ArchRProj = projP_3,
-    useMatrix = "GeneScoreMatrix",
-    groupBy = "sample_cluster",
-    testMethod = "wilcoxon",
-    bias = c("TSSEnrichment", "log10(nFrags)"),
-    useGroups = paste0("sample3_", common_clusters_s3s4),
-    bgdGroups = paste0("sample4_", common_clusters_s3s4)
-  )
-  
-  markerList_s3s4 <- getMarkers(markerTest_s3s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
-  
   for(cluster in common_clusters_s3s4) {
-    cluster_name <- paste0("sample3_", cluster)
     
-    if(cluster_name %in% names(markerList_s3s4)) {
-      cluster_markers <- markerList_s3s4[[cluster_name]]
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    markerTest_cluster <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample3",
+      bgdGroups = "sample4"
+    )
+    
+    markerList_cluster <- getMarkers(markerTest_cluster, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample3" %in% names(markerList_cluster)) {
+      cluster_markers <- markerList_cluster[["sample3"]]
       
       if(nrow(cluster_markers) > 0) {
         write.csv(cluster_markers, 
                   file = paste0("sample3_vs_sample4_", cluster, "_markers.csv"), 
                   row.names = TRUE)
         
-        print(paste("Sample3 vs Sample4,", cluster, "- markers:", nrow(cluster_markers)))
+        print(paste("  Markers found:", nrow(cluster_markers)))
         
-        pv <- plotMarkers(
-          seMarker = markerTest_s3s4, 
-          name = cluster_name,
-          cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5", 
-          plotAs = "Volcano"
-        )
+        all_results <- getMarkers(markerTest_cluster, cutOff = "FDR <= 1")
         
-        plotPDF(pv, 
-                name = paste0("Sample3_vs_Sample4_", cluster, "_Volcano_2025-10-09"), 
-                width = 5, 
-                height = 5, 
-                ArchRProj = projP_3, 
-                addDOC = FALSE)
-        
-        print(paste("  Volcano plot saved for", cluster))
+        if("sample3" %in% names(all_results)) {
+          volcano_data <- all_results[["sample3"]]
+          
+          if(nrow(volcano_data) > 10) {
+            
+            volcano_data$Significant <- ifelse(
+              volcano_data$FDR <= 0.1 & abs(volcano_data$Log2FC) >= 0.5,
+              "Significant",
+              "Not Significant"
+            )
+            
+            pv <- ggplot(volcano_data, aes(x = Log2FC, y = -log10(FDR), color = Significant)) +
+              geom_point(alpha = 0.6, size = 1.5) +
+              scale_color_manual(values = c("Not Significant" = "grey50", "Significant" = "red")) +
+              geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "blue", linewidth = 0.5) +
+              labs(
+                title = paste0("Sample3 vs Sample4 - ", cluster),
+                x = "Log2 Fold Change",
+                y = "-Log10(FDR)",
+                subtitle = paste0(nrow(cluster_markers), " significant markers")
+              ) +
+              theme_bw() +
+              theme(
+                legend.position = "top",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+                plot.subtitle = element_text(hjust = 0.5, size = 10)
+              )
+            
+            plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+            if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+            
+            tryCatch({
+              ggsave(
+                filename = paste0(plots_dir, "Sample3_vs_Sample4_", cluster, "_Volcano_2025-10-09.pdf"),
+                plot = pv,
+                width = 6,
+                height = 5,
+                device = "pdf"
+              )
+              print(paste("  Volcano plot saved for", cluster))
+            }, error = function(e) {
+              print(paste("  Error saving volcano plot for", cluster, ":", e$message))
+            }, finally = {
+              while(dev.cur() > 1) dev.off()
+            })
+            
+          } else {
+            print(paste("  Skipping volcano plot for", cluster, "- insufficient genes"))
+          }
+        }
       }
     }
   }
 }
 
+# Final cleanup
+while(dev.cur() > 1) dev.off()
+
 print("Done! All cluster-specific volcano plots have been created.")
-
-
-#####################################################
-#####################################################
-#####################################################
+print(paste("CSV files saved to:", getwd()))
+print(paste("Volcano plots saved to:", paste0(getOutputDirectory(projP_3), "/Plots/")))
