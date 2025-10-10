@@ -1,0 +1,478 @@
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+setwd("/Volumes/DataBox2/archR_analysis")
+
+
+#####################################################
+#####################################################
+# MOTIF DIFFERENTIAL ACTIVITY ANALYSIS
+#####################################################
+#####################################################
+
+# Ensure we have motif annotations and deviations
+if("Motif" %ni% names(projP_3@peakAnnotation)){
+  projP_3 <- addMotifAnnotations(ArchRProj = projP_3, motifSet = "cisbp", name = "Motif")
+}
+
+if("MotifMatrix" %ni% getAvailableMatrices(projP_3)){
+  projP_3 <- addBgdPeaks(projP_3)
+  projP_3 <- addDeviationsMatrix(ArchRProj = projP_3, peakAnnotation = "Motif", force = TRUE)
+}
+
+# Verify sample names are set up
+if(!"sample" %in% names(projP_3@cellColData)){
+  sample <- projP_3$Sample
+  sample <- gsub("cortex_fresh_v1", "sample1", sample)
+  sample <- gsub("cortex_v1-1_chromx", "sample2", sample)
+  sample <- gsub("cortex_v2_chromx", "sample3", sample)
+  sample <- gsub("cortex_v2_cont", "sample4", sample)
+  projP_3$sample <- sample
+}
+
+# Create sample_cluster identifier
+projP_3$sample_cluster <- paste0(projP_3$sample, "_", projP_3$Clusters)
+
+all_clusters <- unique(projP_3$Clusters)
+print(all_clusters)
+
+#####################################################
+# Helper function to find common clusters
+#####################################################
+
+get_common_clusters <- function(sample1_name, sample2_name) {
+  sample1_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample1_name])
+  sample2_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample2_name])
+  
+  sample1_clusters <- gsub(paste0(sample1_name, "_"), "", sample1_combinations)
+  sample2_clusters <- gsub(paste0(sample2_name, "_"), "", sample2_combinations)
+  
+  common <- intersect(sample1_clusters, sample2_clusters)
+  return(common)
+}
+
+#####################################################
+#####################################################
+# BIDIRECTIONAL MOTIF COMPARISONS BY CLUSTER
+#####################################################
+#####################################################
+
+
+# Close any open plots
+while(dev.cur() > 1) dev.off()
+
+# Define comparison pairs
+comparison_pairs <- list(
+  list(s1 = "sample1", s2 = "sample2"),
+  list(s1 = "sample1", s2 = "sample3"),
+  list(s1 = "sample1", s2 = "sample4"),
+  list(s1 = "sample2", s2 = "sample3"),
+  list(s1 = "sample2", s2 = "sample4"),
+  list(s1 = "sample3", s2 = "sample4")
+)
+
+#####################################################
+# Process each comparison pair
+#####################################################
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n===========================================\n"))
+  cat(paste("PROCESSING:", s1, "vs", s2, "\n"))
+  cat(paste("===========================================\n\n"))
+  
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) {
+    cat("No common clusters found\n")
+    next
+  }
+  
+  cat(paste("Common clusters:", paste(common_clusters, collapse=", "), "\n\n"))
+  
+  # Process each cluster
+  for(cluster in common_clusters) {
+    
+    cat(paste("--- Cluster:", cluster, "---\n"))
+    
+    # Subset to current cluster
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: s1 vs s2
+    cat(paste("  Direction 1:", s1, "vs", s2, "\n"))
+    
+    motifTest_dir1 <- tryCatch({
+      getMarkerFeatures(
+        ArchRProj = clusterSubset,
+        useMatrix = "MotifMatrix",
+        groupBy = "sample",
+        testMethod = "wilcoxon",
+        useGroups = s1,
+        bgdGroups = s2
+      )
+    }, error = function(e) {
+      cat(paste("    Error in motif test:", e$message, "\n"))
+      return(NULL)
+    })
+    
+    if(!is.null(motifTest_dir1)) {
+      motifList_dir1 <- getMarkers(motifTest_dir1, cutOff = "FDR <= 0.1 & abs(MeanDiff) >= 0.1")
+      
+      if(s1 %in% names(motifList_dir1)) {
+        motifs_dir1 <- motifList_dir1[[s1]]
+        
+        if(nrow(motifs_dir1) > 0) {
+          write.csv(motifs_dir1, 
+                    file = paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv"), 
+                    row.names = TRUE)
+          cat(paste("    Motifs found:", nrow(motifs_dir1), "\n"))
+        } else {
+          cat("    No motifs passed threshold\n")
+        }
+      }
+    }
+    
+    # DIRECTION 2: s2 vs s1
+    cat(paste("  Direction 2:", s2, "vs", s1, "\n"))
+    
+    motifTest_dir2 <- tryCatch({
+      getMarkerFeatures(
+        ArchRProj = clusterSubset,
+        useMatrix = "MotifMatrix",
+        groupBy = "sample",
+        testMethod = "wilcoxon",
+        useGroups = s2,
+        bgdGroups = s1
+      )
+    }, error = function(e) {
+      cat(paste("    Error in motif test:", e$message, "\n"))
+      return(NULL)
+    })
+    
+    if(!is.null(motifTest_dir2)) {
+      motifList_dir2 <- getMarkers(motifTest_dir2, cutOff = "FDR <= 0.1 & abs(MeanDiff) >= 0.1")
+      
+      if(s2 %in% names(motifList_dir2)) {
+        motifs_dir2 <- motifList_dir2[[s2]]
+        
+        if(nrow(motifs_dir2) > 0) {
+          write.csv(motifs_dir2, 
+                    file = paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv"), 
+                    row.names = TRUE)
+          cat(paste("    Motifs found:", nrow(motifs_dir2), "\n"))
+        } else {
+          cat("    No motifs passed threshold\n")
+        }
+      }
+    }
+    
+    cat("\n")
+  }
+}
+
+cat("Bidirectional motif comparisons complete!\n\n")
+
+#####################################################
+#####################################################
+# IDENTIFY MOTIF UNIONS (BIDIRECTIONAL MOTIFS)
+#####################################################
+#####################################################
+
+cat("\n========================================\n")
+cat("IDENTIFYING MOTIF UNIONS\n")
+cat("========================================\n\n")
+
+# Function to find motif unions
+find_motif_unions <- function(file1, file2, sample1, sample2, cluster) {
+  
+  if(!file.exists(file1) || !file.exists(file2)) {
+    cat(paste("  Skipping", cluster, "- one or both files missing\n"))
+    return(NULL)
+  }
+  
+  motifs1 <- read.csv(file1, row.names = 1, stringsAsFactors = FALSE)
+  motifs2 <- read.csv(file2, row.names = 1, stringsAsFactors = FALSE)
+  
+  # Find common motifs
+  common_motifs <- intersect(motifs1$name, motifs2$name)
+  
+  if(length(common_motifs) == 0) {
+    cat(paste("  ", cluster, "- No motif unions found\n"))
+    return(NULL)
+  }
+  
+  # Extract data for common motifs
+  union_data1 <- motifs1[motifs1$name %in% common_motifs, ]
+  union_data2 <- motifs2[motifs2$name %in% common_motifs, ]
+  
+  # Add suffixes and merge
+  colnames(union_data1) <- paste0(colnames(union_data1), "_", sample1, "vs", sample2)
+  colnames(union_data2) <- paste0(colnames(union_data2), "_", sample2, "vs", sample1)
+  
+  gene_col1 <- paste0("name_", sample1, "vs", sample2)
+  gene_col2 <- paste0("name_", sample2, "vs", sample1)
+  
+  union_data <- merge(union_data1, union_data2, 
+                      by.x = gene_col1, by.y = gene_col2, 
+                      all = FALSE)
+  
+  colnames(union_data)[1] <- "name"
+  
+  cat(paste("  ", cluster, "- Found", nrow(union_data), "motif unions\n"))
+  
+  return(union_data)
+}
+
+# Process motif unions
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n--- Processing motif unions for", s1, "vs", s2, "---\n"))
+  
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) {
+    cat("  No common clusters found\n")
+    next
+  }
+  
+  for(cluster in common_clusters) {
+    
+    file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    motif_unions <- find_motif_unions(file1, file2, s1, s2, cluster)
+    
+    if(!is.null(motif_unions) && nrow(motif_unions) > 0) {
+      output_file <- paste0("Motif_", s1, "_", s2, "_", cluster, "_unions.csv")
+      write.csv(motif_unions, file = output_file, row.names = FALSE)
+    }
+  }
+}
+
+#####################################################
+# CREATE SUMMARY STATISTICS
+#####################################################
+
+cat("\n========================================\n")
+cat("GENERATING SUMMARY STATISTICS\n")
+cat("========================================\n\n")
+
+summary_df <- data.frame(
+  Comparison = character(),
+  Cluster = character(),
+  Direction1_Motifs = integer(),
+  Direction2_Motifs = integer(),
+  Motif_Unions = integer(),
+  stringsAsFactors = FALSE
+)
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) next
+  
+  for(cluster in common_clusters) {
+    
+    file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    union_file <- paste0("Motif_", s1, "_", s2, "_", cluster, "_unions.csv")
+    
+    n_dir1 <- 0
+    n_dir2 <- 0
+    n_unions <- 0
+    
+    if(file.exists(file1)) {
+      n_dir1 <- nrow(read.csv(file1, row.names = 1))
+    }
+    
+    if(file.exists(file2)) {
+      n_dir2 <- nrow(read.csv(file2, row.names = 1))
+    }
+    
+    if(file.exists(union_file)) {
+      n_unions <- nrow(read.csv(union_file))
+    }
+    
+    summary_df <- rbind(summary_df, data.frame(
+      Comparison = paste0(s1, " vs ", s2),
+      Cluster = cluster,
+      Direction1_Motifs = n_dir1,
+      Direction2_Motifs = n_dir2,
+      Motif_Unions = n_unions,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+write.csv(summary_df, "Motif_Union_Summary_2025-10-10.csv", row.names = FALSE)
+
+cat("\nSummary of Motif Activity:\n")
+print(summary_df)
+
+cat("\n--- Overall Statistics ---\n")
+cat(paste("Total comparisons:", nrow(summary_df), "\n"))
+cat(paste("Total motif unions:", sum(summary_df$Motif_Unions), "\n"))
+cat(paste("Average motif unions per cluster:", 
+          round(mean(summary_df$Motif_Unions), 2), "\n"))
+cat(paste("Clusters with motif unions:", 
+          sum(summary_df$Motif_Unions > 0), "/", nrow(summary_df), "\n\n"))
+
+#####################################################
+#####################################################
+# CREATE MOTIF UNION PLOTS
+#####################################################
+#####################################################
+
+cat("\n========================================\n")
+cat("CREATING MOTIF UNION VISUALIZATIONS\n")
+cat("========================================\n\n")
+
+# Function to create motif deviation plot
+create_motif_union_plot <- function(markers_file, union_file, sample1, sample2, cluster) {
+  
+  if(!file.exists(markers_file) || !file.exists(union_file)) {
+    return(NULL)
+  }
+  
+  motifs_data <- read.csv(markers_file, row.names = 1, stringsAsFactors = FALSE)
+  motif_unions <- read.csv(union_file, stringsAsFactors = FALSE)
+  
+  if(nrow(motif_unions) == 0) return(NULL)
+  
+  motifs_data$Motif_Type <- ifelse(motifs_data$name %in% motif_unions$name, 
+                                   "Motif Union (Bidirectional)", 
+                                   "Significant (Unidirectional)")
+  
+  color_scheme <- c("Motif Union (Bidirectional)" = "#E31A1C", 
+                    "Significant (Unidirectional)" = "#FF7F00")
+  
+  n_unions <- sum(motifs_data$Motif_Type == "Motif Union (Bidirectional)")
+  n_total <- nrow(motifs_data)
+  
+  p <- ggplot(motifs_data, aes(x = MeanDiff, y = -log10(FDR), color = Motif_Type)) +
+    geom_point(alpha = 0.7, size = 2.5) +
+    scale_color_manual(values = color_scheme) +
+    geom_hline(yintercept = -log10(0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+    geom_vline(xintercept = c(-0.1, 0.1), linetype = "dashed", color = "blue", linewidth = 0.5) +
+    labs(
+      title = paste0(sample1, " vs ", sample2, " - ", cluster),
+      x = "Mean Difference in Motif Deviation",
+      y = "-Log10(FDR)",
+      subtitle = paste0(n_unions, " motif unions out of ", n_total, " significant motifs"),
+      color = "Motif Category"
+    ) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+      plot.subtitle = element_text(hjust = 0.5, size = 9, color = "#E31A1C")
+    )
+  
+  return(p)
+}
+
+# Generate plots
+plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/Motifs/")
+if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n--- Creating plots for", s1, "vs", s2, "---\n"))
+  
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) next
+  
+  for(cluster in common_clusters) {
+    
+    union_file <- paste0("Motif_", s1, "_", s2, "_", cluster, "_unions.csv")
+    
+    if(!file.exists(union_file)) next
+    
+    # Direction 1
+    markers_file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    p1 <- create_motif_union_plot(markers_file1, union_file, s1, s2, cluster)
+    
+    if(!is.null(p1)) {
+      tryCatch({
+        ggsave(
+          filename = paste0(plots_dir, "Motif_", s1, "_vs_", s2, "_", cluster, "_Union_Plot_2025-10-10.pdf"),
+          plot = p1, width = 8, height = 6, device = "pdf"
+        )
+        cat(paste("  ", cluster, "- Plot saved (", s1, "vs", s2, ")\n"))
+      }, error = function(e) {
+        cat(paste("  Error saving plot:", e$message, "\n"))
+      }, finally = {
+        while(dev.cur() > 1) dev.off()
+      })
+    }
+    
+    # Direction 2
+    markers_file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    p2 <- create_motif_union_plot(markers_file2, union_file, s2, s1, cluster)
+    
+    if(!is.null(p2)) {
+      tryCatch({
+        ggsave(
+          filename = paste0(plots_dir, "Motif_", s2, "_vs_", s1, "_", cluster, "_Union_Plot_2025-10-10.pdf"),
+          plot = p2, width = 8, height = 6, device = "pdf"
+        )
+        cat(paste("  ", cluster, "- Plot saved (", s2, "vs", s1, ")\n"))
+      }, error = function(e) {
+        cat(paste("  Error saving plot:", e$message, "\n"))
+      }, finally = {
+        while(dev.cur() > 1) dev.off()
+      })
+    }
+  }
+}
+
+while(dev.cur() > 1) dev.off()
+
+#####################################################
+# FINAL SUMMARY
+#####################################################
+
+cat("\n========================================\n")
+cat("MOTIF ANALYSIS COMPLETE!\n")
+cat("========================================\n\n")
+
+cat("FILES GENERATED:\n")
+cat("================\n\n")
+cat("1. MOTIF MARKER FILES (CSV):\n")
+cat("   Format: Motif_[sample]_vs_[sample]_[cluster]_markers.csv\n")
+cat("   - Differentially active motifs in one direction\n")
+cat("   - Thresholds: FDR ≤ 0.1, |MeanDiff| ≥ 0.1\n\n")
+cat("2. MOTIF UNION FILES (CSV):\n")
+cat("   Format: Motif_[sample]_[sample]_[cluster]_unions.csv\n")
+cat("   - Motifs differentially active in BOTH directions\n")
+cat("   - High-confidence bidirectional motif changes\n\n")
+cat("3. MOTIF UNION PLOTS (PDF):\n")
+cat("   Format: Motif_[sample]_vs_[sample]_[cluster]_Union_Plot_2025-10-10.pdf\n")
+cat("   - Red: Motif unions (bidirectional)\n")
+cat("   - Orange: Other significant motifs\n\n")
+cat("4. SUMMARY FILE: Motif_Union_Summary_2025-10-10.csv\n\n")
+
+cat("NEXT STEPS:\n")
+cat("===========\n")
+cat("• Review motif union files for high-confidence TF activity changes\n")
+cat("• Cross-reference motif unions with gene unions for TF-target relationships\n")
+cat("• Perform TF footprinting analysis on motif unions\n")
+cat("• Validate key TFs experimentally\n\n")
+
+# Save project
+saveArchRProject(ArchRProj = projP_3, outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", load = FALSE)
