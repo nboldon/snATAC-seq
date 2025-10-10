@@ -1,4 +1,4 @@
-## Differential Gene Accessibility between samples by cluster
+
 
 ## Differential Gene Accessibility between samples by cluster
 
@@ -452,3 +452,967 @@ for(cluster in all_clusters) {
 }
 
 print("Done combining all clusters!")
+
+
+
+
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+
+
+# Get marker features grouped by Sample instead of Clusters
+markerGS_bySample <- getMarkerFeatures(
+  ArchRProj = projP_3,
+  useMatrix = "GeneScoreMatrix",
+  groupBy = "Sample",  
+  bias = c("TSSEnrichment", "log10(nFrags)"),
+  testMethod = "wilcoxon"
+)
+
+
+#########################
+
+
+# Get all gene markers with conservative cutoffs
+markerList_bySample <- getMarkers(markerGS_bySample, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+
+# Loop through each sample and save all markers
+for(i in names(markerList_bySample)) {
+  
+  # Get the marker data for current sample
+  sample_markers <- markerList_bySample[[i]]
+  
+  # Check if there are any markers
+  if(nrow(sample_markers) > 0) {
+    # Save all markers for this sample
+    write.csv(sample_markers, file = paste0(i, "_all_markers.csv"), row.names = TRUE)
+    
+    # Print how many markers were found
+    print(paste(i, "- Total markers:", nrow(sample_markers)))
+  } else {
+    print(paste(i, "- No markers found"))
+  }
+}
+
+
+"cortex_fresh_v1 - Total markers: 206"
+"cortex_v1-1_chromx - No markers found"
+"cortex_v2_chromx - No markers found"
+"cortex_v2_cont - No markers found"
+
+
+#########################
+
+
+# Get markers with expanded cutoffs
+markerList_bySample_Expanded <- getMarkers(markerGS_bySample, cutOff = "FDR <= 0.1 & abs(Log2FC) >= 0.5")
+
+# Loop through each sample and save all markers
+for(i in names(markerList_bySample_Expanded)) {
+  
+  sample_markers <- markerList_bySample_Expanded[[i]]
+  
+  if(nrow(sample_markers) > 0) {
+    write.csv(sample_markers, file = paste0(i, "_all_markers_expanded.csv"), row.names = TRUE)
+    print(paste(i, "- Total markers:", nrow(sample_markers)))
+  } else {
+    print(paste(i, "- No markers found"))
+  }
+}
+
+"cortex_fresh_v1 - Total markers: 1928"
+"cortex_v1-1_chromx - Total markers: 11"
+"cortex_v2_chromx - Total markers: 1"
+"cortex_v2_cont - No markers found"
+
+
+
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+
+
+#####################################################
+# BIDIRECTIONAL PAIRWISE COMPARISONS
+#####################################################
+
+# SETUP: Rename samples and create sample_cluster identifier
+sample <- projP_3$Sample
+sample <- gsub("cortex_fresh_v1", "sample1", sample)
+sample <- gsub("cortex_v1-1_chromx", "sample2", sample)
+sample <- gsub("cortex_v2_chromx", "sample3", sample)
+sample <- gsub("cortex_v2_cont", "sample4", sample)
+
+projP_3$sample <- sample
+projP_3$sample_cluster <- paste0(projP_3$sample, "_", projP_3$Clusters)
+
+all_clusters <- unique(projP_3$Clusters)
+print(all_clusters)
+
+#####################################################
+# Helper function to find common clusters
+#####################################################
+
+get_common_clusters <- function(sample1_name, sample2_name) {
+  sample1_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample1_name])
+  sample2_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample2_name])
+  
+  sample1_clusters <- gsub(paste0(sample1_name, "_"), "", sample1_combinations)
+  sample2_clusters <- gsub(paste0(sample2_name, "_"), "", sample2_combinations)
+  
+  common <- intersect(sample1_clusters, sample2_clusters)
+  return(common)
+}
+
+#####################################################
+# Load required library
+#####################################################
+
+library(ggplot2)
+while(dev.cur() > 1) dev.off()
+
+
+#####################################################
+# Sample1 vs Sample2 - bidirectional 
+#####################################################
+
+common_clusters_s1s2 <- get_common_clusters("sample1", "sample2")
+print(paste("Common clusters between sample1 and sample2:", paste(common_clusters_s1s2, collapse=", ")))
+
+if(length(common_clusters_s1s2) > 0) {
+  
+  for(cluster in common_clusters_s1s2) {
+    
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: sample1 vs sample2
+    print(paste("  Direction 1: sample1 vs sample2"))
+    
+    markerTest_s1s2 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample1",
+      bgdGroups = "sample2"
+    )
+    
+    markerList_s1s2 <- getMarkers(markerTest_s1s2, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample1" %in% names(markerList_s1s2)) {
+      markers_s1s2 <- markerList_s1s2[["sample1"]]
+      
+      if(nrow(markers_s1s2) > 0) {
+        write.csv(markers_s1s2, 
+                  file = paste0("sample1_vs_sample2_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s1s2)))
+      }
+    }
+    
+    # DIRECTION 2: sample2 vs sample1
+    print(paste("  Direction 2: sample2 vs sample1"))
+    
+    markerTest_s2s1 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample2",
+      bgdGroups = "sample1"
+    )
+    
+    markerList_s2s1 <- getMarkers(markerTest_s2s1, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample2" %in% names(markerList_s2s1)) {
+      markers_s2s1 <- markerList_s2s1[["sample2"]]
+      
+      if(nrow(markers_s2s1) > 0) {
+        write.csv(markers_s2s1, 
+                  file = paste0("sample2_vs_sample1_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s2s1)))
+      }
+    }
+    
+    print("")
+  }
+}
+
+
+#####################################################
+# Sample1 vs Sample3 - bidirectional 
+#####################################################
+
+common_clusters_s1s3 <- get_common_clusters("sample1", "sample3")
+print(paste("Common clusters between sample1 and sample3:", paste(common_clusters_s1s3, collapse=", ")))
+
+if(length(common_clusters_s1s3) > 0) {
+  
+  for(cluster in common_clusters_s1s3) {
+    
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: sample1 vs sample3
+    print(paste("  Direction 1: sample1 vs sample3"))
+    
+    markerTest_s1s3 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample1",
+      bgdGroups = "sample3"
+    )
+    
+    markerList_s1s3 <- getMarkers(markerTest_s1s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample1" %in% names(markerList_s1s3)) {
+      markers_s1s3 <- markerList_s1s3[["sample1"]]
+      
+      if(nrow(markers_s1s3) > 0) {
+        write.csv(markers_s1s3, 
+                  file = paste0("sample1_vs_sample3_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s1s3)))
+      }
+    }
+    
+    # DIRECTION 2: sample3 vs sample1
+    print(paste("  Direction 2: sample3 vs sample1"))
+    
+    markerTest_s3s1 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample3",
+      bgdGroups = "sample1"
+    )
+    
+    markerList_s3s1 <- getMarkers(markerTest_s3s1, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample3" %in% names(markerList_s3s1)) {
+      markers_s3s1 <- markerList_s3s1[["sample3"]]
+      
+      if(nrow(markers_s3s1) > 0) {
+        write.csv(markers_s3s1, 
+                  file = paste0("sample3_vs_sample1_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s3s1)))
+      }
+    }
+    
+    print("")
+  }
+}
+
+
+#####################################################
+# Sample1 vs Sample4 - bidirectional 
+#####################################################
+
+common_clusters_s1s4 <- get_common_clusters("sample1", "sample4")
+print(paste("Common clusters between sample1 and sample4:", paste(common_clusters_s1s4, collapse=", ")))
+
+if(length(common_clusters_s1s4) > 0) {
+  
+  for(cluster in common_clusters_s1s4) {
+    
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: sample1 vs sample4
+    print(paste("  Direction 1: sample1 vs sample4"))
+    
+    markerTest_s1s4 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample1",
+      bgdGroups = "sample4"
+    )
+    
+    markerList_s1s4 <- getMarkers(markerTest_s1s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample1" %in% names(markerList_s1s4)) {
+      markers_s1s4 <- markerList_s1s4[["sample1"]]
+      
+      if(nrow(markers_s1s4) > 0) {
+        write.csv(markers_s1s4, 
+                  file = paste0("sample1_vs_sample4_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s1s4)))
+      }
+    }
+    
+    # DIRECTION 2: sample4 vs sample1
+    print(paste("  Direction 2: sample4 vs sample1"))
+    
+    markerTest_s4s1 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample4",
+      bgdGroups = "sample1"
+    )
+    
+    markerList_s4s1 <- getMarkers(markerTest_s4s1, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample4" %in% names(markerList_s4s1)) {
+      markers_s4s1 <- markerList_s4s1[["sample4"]]
+      
+      if(nrow(markers_s4s1) > 0) {
+        write.csv(markers_s4s1, 
+                  file = paste0("sample4_vs_sample1_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s4s1)))
+      }
+    }
+    
+    print("")
+  }
+}
+
+
+#####################################################
+# Sample2 vs Sample3 - bidirectional 
+#####################################################
+
+common_clusters_s2s3 <- get_common_clusters("sample2", "sample3")
+print(paste("Common clusters between sample2 and sample3:", paste(common_clusters_s2s3, collapse=", ")))
+
+if(length(common_clusters_s2s3) > 0) {
+  
+  for(cluster in common_clusters_s2s3) {
+    
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: sample2 vs sample3
+    print(paste("  Direction 1: sample2 vs sample3"))
+    
+    markerTest_s2s3 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample2",
+      bgdGroups = "sample3"
+    )
+    
+    markerList_s2s3 <- getMarkers(markerTest_s2s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample2" %in% names(markerList_s2s3)) {
+      markers_s2s3 <- markerList_s2s3[["sample2"]]
+      
+      if(nrow(markers_s2s3) > 0) {
+        write.csv(markers_s2s3, 
+                  file = paste0("sample2_vs_sample3_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s2s3)))
+      }
+    }
+    
+    # DIRECTION 2: sample3 vs sample2
+    print(paste("  Direction 2: sample3 vs sample2"))
+    
+    markerTest_s3s2 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample3",
+      bgdGroups = "sample2"
+    )
+    
+    markerList_s3s2 <- getMarkers(markerTest_s3s2, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample3" %in% names(markerList_s3s2)) {
+      markers_s3s2 <- markerList_s3s2[["sample3"]]
+      
+      if(nrow(markers_s3s2) > 0) {
+        write.csv(markers_s3s2, 
+                  file = paste0("sample3_vs_sample2_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s3s2)))
+      }
+    }
+    
+    print("")
+  }
+}
+
+
+#####################################################
+# Sample2 vs Sample4 - bidirectional 
+#####################################################
+
+common_clusters_s2s4 <- get_common_clusters("sample2", "sample4")
+print(paste("Common clusters between sample2 and sample4:", paste(common_clusters_s2s4, collapse=", ")))
+
+if(length(common_clusters_s2s4) > 0) {
+  
+  for(cluster in common_clusters_s2s4) {
+    
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: sample2 vs sample4
+    print(paste("  Direction 1: sample2 vs sample4"))
+    
+    markerTest_s2s4 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample2",
+      bgdGroups = "sample4"
+    )
+    
+    markerList_s2s4 <- getMarkers(markerTest_s2s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample2" %in% names(markerList_s2s4)) {
+      markers_s2s4 <- markerList_s2s4[["sample2"]]
+      
+      if(nrow(markers_s2s4) > 0) {
+        write.csv(markers_s2s4, 
+                  file = paste0("sample2_vs_sample4_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s2s4)))
+      }
+    }
+    
+    # DIRECTION 2: sample4 vs sample2
+    print(paste("  Direction 2: sample4 vs sample2"))
+    
+    markerTest_s4s2 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample4",
+      bgdGroups = "sample2"
+    )
+    
+    markerList_s4s2 <- getMarkers(markerTest_s4s2, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample4" %in% names(markerList_s4s2)) {
+      markers_s4s2 <- markerList_s4s2[["sample4"]]
+      
+      if(nrow(markers_s4s2) > 0) {
+        write.csv(markers_s4s2, 
+                  file = paste0("sample4_vs_sample2_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s4s2)))
+      }
+    }
+    
+    print("")
+  }
+}
+
+
+#####################################################
+# Sample3 vs Sample4 - bidirectional 
+#####################################################
+
+common_clusters_s3s4 <- get_common_clusters("sample3", "sample4")
+print(paste("Common clusters between sample3 and sample4:", paste(common_clusters_s3s4, collapse=", ")))
+
+if(length(common_clusters_s3s4) > 0) {
+  
+  for(cluster in common_clusters_s3s4) {
+    
+    print(paste("Processing cluster:", cluster))
+    
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # DIRECTION 1: sample3 vs sample4
+    print(paste("  Direction 1: sample3 vs sample4"))
+    
+    markerTest_s3s4 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample3",
+      bgdGroups = "sample4"
+    )
+    
+    markerList_s3s4 <- getMarkers(markerTest_s3s4, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample3" %in% names(markerList_s3s4)) {
+      markers_s3s4 <- markerList_s3s4[["sample3"]]
+      
+      if(nrow(markers_s3s4) > 0) {
+        write.csv(markers_s3s4, 
+                  file = paste0("sample3_vs_sample4_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s3s4)))
+      }
+    }
+    
+    # DIRECTION 2: sample4 vs sample3
+    print(paste("  Direction 2: sample4 vs sample3"))
+    
+    markerTest_s4s3 <- getMarkerFeatures(
+      ArchRProj = clusterSubset,
+      useMatrix = "GeneScoreMatrix",
+      groupBy = "sample",
+      testMethod = "wilcoxon",
+      bias = c("TSSEnrichment", "log10(nFrags)"),
+      useGroups = "sample4",
+      bgdGroups = "sample3"
+    )
+    
+    markerList_s4s3 <- getMarkers(markerTest_s4s3, cutOff = "FDR <= 0.01 & abs(Log2FC) >= 1.25")
+    
+    if("sample4" %in% names(markerList_s4s3)) {
+      markers_s4s3 <- markerList_s4s3[["sample4"]]
+      
+      if(nrow(markers_s4s3) > 0) {
+        write.csv(markers_s4s3, 
+                  file = paste0("sample4_vs_sample3_", cluster, "_markers.csv"), 
+                  row.names = TRUE)
+        print(paste("  Markers found:", nrow(markers_s4s3)))
+      }
+    }
+    
+    print("")
+  }
+}
+
+
+cat("All bidirectional comparisons complete!\n")
+
+
+#####################################################
+#####################################################
+# IDENTIFY GENE UNIONS (BIDIRECTIONAL GENES)
+#####################################################
+#####################################################
+
+
+# Function to find gene unions between two comparison files
+find_gene_unions <- function(file1, file2, sample1, sample2, cluster) {
+  
+  # Check if both files exist
+  if(!file.exists(file1) || !file.exists(file2)) {
+    cat(paste("  Skipping", cluster, "- one or both files missing\n"))
+    return(NULL)
+  }
+  
+  # Read both files
+  markers1 <- read.csv(file1, row.names = 1, stringsAsFactors = FALSE)
+  markers2 <- read.csv(file2, row.names = 1, stringsAsFactors = FALSE)
+  
+  # Find common genes (gene unions)
+  common_genes <- intersect(markers1$name, markers2$name)
+  
+  if(length(common_genes) == 0) {
+    cat(paste("  ", cluster, "- No gene unions found\n"))
+    return(NULL)
+  }
+  
+  # Extract data for common genes from both directions
+  union_data1 <- markers1[markers1$name %in% common_genes, ]
+  union_data2 <- markers2[markers2$name %in% common_genes, ]
+  
+  # Merge the data
+  # Add suffix to distinguish columns from each direction
+  colnames(union_data1) <- paste0(colnames(union_data1), "_", sample1, "vs", sample2)
+  colnames(union_data2) <- paste0(colnames(union_data2), "_", sample2, "vs", sample1)
+  
+  # Merge by gene name
+  gene_col1 <- paste0("name_", sample1, "vs", sample2)
+  gene_col2 <- paste0("name_", sample2, "vs", sample1)
+  
+  union_data <- merge(union_data1, union_data2, 
+                      by.x = gene_col1, by.y = gene_col2, 
+                      all = FALSE)
+  
+  # Rename the gene column to just "name"
+  colnames(union_data)[1] <- "name"
+  
+  cat(paste("  ", cluster, "- Found", nrow(union_data), "gene unions\n"))
+  
+  return(union_data)
+}
+
+
+# Process all comparison pairs
+comparison_pairs <- list(
+  list(s1 = "sample1", s2 = "sample2"),
+  list(s1 = "sample1", s2 = "sample3"),
+  list(s1 = "sample1", s2 = "sample4"),
+  list(s1 = "sample2", s2 = "sample3"),
+  list(s1 = "sample2", s2 = "sample4"),
+  list(s1 = "sample3", s2 = "sample4")
+)
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n--- Processing gene unions for", s1, "vs", s2, "---\n"))
+  
+  # Get common clusters for this pair
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) {
+    cat("  No common clusters found\n")
+    next
+  }
+  
+  # Process each cluster
+  for(cluster in common_clusters) {
+    
+    # Define file names
+    file1 <- paste0(s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    file2 <- paste0(s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    # Find gene unions
+    gene_unions <- find_gene_unions(file1, file2, s1, s2, cluster)
+    
+    # Save if unions were found
+    if(!is.null(gene_unions) && nrow(gene_unions) > 0) {
+      output_file <- paste0(s1, "_", s2, "_", cluster, "_gene_unions.csv")
+      write.csv(gene_unions, file = output_file, row.names = FALSE)
+    }
+  }
+}
+
+#####################################################
+# CREATE SUMMARY STATISTICS
+#####################################################
+
+cat("GENERATING SUMMARY STATISTICS\n")
+
+# Initialize summary dataframe
+summary_df <- data.frame(
+  Comparison = character(),
+  Cluster = character(),
+  Direction1_Genes = integer(),
+  Direction2_Genes = integer(),
+  Gene_Unions = integer(),
+  stringsAsFactors = FALSE
+)
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) next
+  
+  for(cluster in common_clusters) {
+    
+    # Count genes in each direction
+    file1 <- paste0(s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    file2 <- paste0(s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    union_file <- paste0(s1, "_", s2, "_", cluster, "_gene_unions.csv")
+    
+    n_dir1 <- 0
+    n_dir2 <- 0
+    n_unions <- 0
+    
+    if(file.exists(file1)) {
+      n_dir1 <- nrow(read.csv(file1, row.names = 1))
+    }
+    
+    if(file.exists(file2)) {
+      n_dir2 <- nrow(read.csv(file2, row.names = 1))
+    }
+    
+    if(file.exists(union_file)) {
+      n_unions <- nrow(read.csv(union_file))
+    }
+    
+    # Add to summary
+    summary_df <- rbind(summary_df, data.frame(
+      Comparison = paste0(s1, " vs ", s2),
+      Cluster = cluster,
+      Direction1_Genes = n_dir1,
+      Direction2_Genes = n_dir2,
+      Gene_Unions = n_unions,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+# Save summary
+write.csv(summary_df, "Gene_Union_Summary_2025-10-09.csv", row.names = FALSE)
+
+# Print summary
+cat("\nSummary of Gene Unions by Comparison:\n")
+print(summary_df)
+
+# Overall statistics
+cat("\n--- Overall Statistics ---\n")
+cat(paste("Total comparisons processed:", nrow(summary_df), "\n"))
+cat(paste("Total gene unions identified:", sum(summary_df$Gene_Unions), "\n"))
+cat(paste("Average gene unions per cluster:", 
+          round(mean(summary_df$Gene_Unions), 2), "\n"))
+cat(paste("Clusters with gene unions:", 
+          sum(summary_df$Gene_Unions > 0), "/", nrow(summary_df), "\n\n"))
+
+
+#####################################################
+#####################################################
+# CREATE GENE UNION VOLCANO PLOTS
+#####################################################
+#####################################################
+
+cat("\n========================================\n")
+cat("CREATING GENE UNION VOLCANO PLOTS\n")
+cat("========================================\n\n")
+
+# Function to create volcano plot highlighting gene unions
+create_union_volcano <- function(markers_file, union_file, sample1, sample2, cluster, direction_label) {
+  
+  # Check if files exist
+  if(!file.exists(markers_file)) {
+    cat(paste("  Skipping", cluster, direction_label, "- markers file missing\n"))
+    return(NULL)
+  }
+  
+  if(!file.exists(union_file)) {
+    cat(paste("  Skipping", cluster, direction_label, "- no gene unions\n"))
+    return(NULL)
+  }
+  
+  # Read the markers (genes that passed conservative thresholds)
+  markers_data <- read.csv(markers_file, row.names = 1, stringsAsFactors = FALSE)
+  
+  # Read gene unions
+  gene_unions <- read.csv(union_file, stringsAsFactors = FALSE)
+  
+  if(nrow(gene_unions) == 0) {
+    cat(paste("  Skipping", cluster, direction_label, "- no gene unions\n"))
+    return(NULL)
+  }
+  
+  # Mark genes as union or non-union
+  markers_data$Gene_Type <- ifelse(markers_data$name %in% gene_unions$name, 
+                                   "Gene Union (Bidirectional)", 
+                                   "Significant (Unidirectional)")
+  
+  # Create color scheme - red for unions, orange for others
+  color_scheme <- c("Gene Union (Bidirectional)" = "#E31A1C", 
+                    "Significant (Unidirectional)" = "#FF7F00")
+  
+  # Count gene unions for subtitle
+  n_unions <- sum(markers_data$Gene_Type == "Gene Union (Bidirectional)")
+  n_total <- nrow(markers_data)
+  
+  # Create volcano plot
+  pv <- ggplot(markers_data, aes(x = Log2FC, y = -log10(FDR), color = Gene_Type)) +
+    geom_point(alpha = 0.7, size = 2) +
+    scale_color_manual(values = color_scheme) +
+    geom_hline(yintercept = -log10(0.01), linetype = "dashed", color = "blue", linewidth = 0.5) +
+    geom_vline(xintercept = c(-1.25, 1.25), linetype = "dashed", color = "blue", linewidth = 0.5) +
+    labs(
+      title = paste0(sample1, " vs ", sample2, " - ", cluster),
+      x = "Log2 Fold Change",
+      y = "-Log10(FDR)",
+      subtitle = paste0(n_unions, " gene unions out of ", n_total, " significant genes (FDR≤0.01, |Log2FC|≥1.25)"),
+      color = "Gene Category"
+    ) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+      plot.subtitle = element_text(hjust = 0.5, size = 9, color = "#E31A1C")
+    )
+  
+  return(pv)
+}
+
+# Process all comparison pairs and create volcano plots
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n--- Creating gene union volcano plots for", s1, "vs", s2, "---\n"))
+  
+  # Get common clusters for this pair
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) {
+    cat("  No common clusters found\n")
+    next
+  }
+  
+  # Process each cluster
+  for(cluster in common_clusters) {
+    
+    union_file <- paste0(s1, "_", s2, "_", cluster, "_gene_unions.csv")
+    
+    # Skip if no gene unions file exists
+    if(!file.exists(union_file)) {
+      cat(paste("  ", cluster, "- No gene unions file\n"))
+      next
+    }
+    
+    # DIRECTION 1: s1 vs s2
+    markers_file1 <- paste0(s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    
+    pv1 <- create_union_volcano(markers_file1, union_file, s1, s2, cluster, "direction1")
+    
+    if(!is.null(pv1)) {
+      plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+      if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+      
+      tryCatch({
+        ggsave(
+          filename = paste0(plots_dir, s1, "_vs_", s2, "_", cluster, "_GeneUnion_Volcano_2025-10-09.pdf"),
+          plot = pv1,
+          width = 8, height = 6, device = "pdf"
+        )
+        cat(paste("  ", cluster, "- Gene union volcano saved (", s1, "vs", s2, ")\n"))
+      }, error = function(e) {
+        cat(paste("  Error saving volcano:", e$message, "\n"))
+      }, finally = {
+        while(dev.cur() > 1) dev.off()
+      })
+    }
+    
+    # DIRECTION 2: s2 vs s1
+    markers_file2 <- paste0(s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    pv2 <- create_union_volcano(markers_file2, union_file, s2, s1, cluster, "direction2")
+    
+    if(!is.null(pv2)) {
+      plots_dir <- paste0(getOutputDirectory(projP_3), "/Plots/")
+      if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+      
+      tryCatch({
+        ggsave(
+          filename = paste0(plots_dir, s2, "_vs_", s1, "_", cluster, "_GeneUnion_Volcano_2025-10-09.pdf"),
+          plot = pv2,
+          width = 8, height = 6, device = "pdf"
+        )
+        cat(paste("  ", cluster, "- Gene union volcano saved (", s2, "vs", s1, ")\n"))
+      }, error = function(e) {
+        cat(paste("  Error saving volcano:", e$message, "\n"))
+      }, finally = {
+        while(dev.cur() > 1) dev.off()
+      })
+    }
+  }
+}
+
+while(dev.cur() > 1) dev.off()
+
+cat("\n========================================\n")
+cat("GENE UNION VOLCANO PLOTS COMPLETE!\n")
+cat("========================================\n\n")
+
+
+#####################################################
+# FINAL SUMMARY
+#####################################################
+
+cat("========================================\n")
+cat("ANALYSIS COMPLETE!\n")
+cat("========================================\n\n")
+cat(paste("Working directory:", getwd(), "\n"))
+cat(paste("Plots directory:", paste0(getOutputDirectory(projP_3), "/Plots/"), "\n\n"))
+
+cat("FILES GENERATED:\n")
+cat("================\n\n")
+
+cat("1. BIDIRECTIONAL MARKER FILES (CSV):\n")
+cat("   Format: [sample]_vs_[sample]_[cluster]_markers.csv\n")
+cat("   - Contains genes significant in one direction\n")
+cat("   - Thresholds: FDR ≤ 0.01, |Log2FC| ≥ 1.25\n")
+cat("   - 12 total comparisons (6 pairs × 2 directions)\n\n")
+
+cat("2. GENE UNION FILES (CSV):\n")
+cat("   Format: [sample]_[sample]_[cluster]_gene_unions.csv\n")
+cat("   - Contains genes significant in BOTH directions\n")
+cat("   - High-confidence bidirectional genes\n")
+cat("   - Includes statistics from both comparison directions\n")
+cat("   - PRIORITIZE THESE for downstream analysis\n\n")
+
+cat("3. GENE UNION VOLCANO PLOTS (PDF):\n")
+cat("   Format: [Sample]_vs_[Sample]_[Cluster]_GeneUnion_Volcano_2025-10-09.pdf\n")
+cat("   - Shows only significant genes (those in marker CSV files)\n")
+cat("   - Red points: Gene unions (bidirectional)\n")
+cat("   - Orange points: Other significant genes (unidirectional)\n")
+cat("   - Dashed lines: FDR = 0.01, Log2FC = ±1.25\n")
+cat("   - Subtitle shows: [N unions] out of [N total significant]\n")
+cat("   - One plot per direction per cluster\n\n")
+
+cat("4. SUMMARY FILE (CSV):\n")
+cat("   File: Gene_Union_Summary_2025-10-09.csv\n")
+cat("   - Overview of all comparisons\n")
+cat("   - Counts for each direction and unions\n\n")
+
+cat("KEY POINTS:\n")
+cat("===========\n")
+cat("• Gene unions = genes significant in BOTH comparison directions\n")
+cat("• Gene unions represent the most robust, reproducible changes\n")
+cat("• Volcano plots ONLY show genes that passed conservative thresholds\n")
+cat("• Numbers on volcano plots match the CSV file gene counts\n")
+cat("• All thresholds are consistent: FDR ≤ 0.01, |Log2FC| ≥ 1.25\n\n")
+
+cat("NEXT STEPS:\n")
+cat("===========\n")
+cat("1. Review Gene_Union_Summary_2025-10-09.csv for overview\n")
+cat("2. Examine gene union volcano plots to visualize results\n")
+cat("3. Use gene union CSV files for:\n")
+cat("   - Pathway enrichment analysis\n")
+cat("   - Gene ontology analysis\n")
+cat("   - Functional annotation\n")
+cat("   - Experimental validation\n\n")
+
+cat("Gene unions are your highest-confidence findings!\n")
+cat("Prioritize these for all downstream functional analyses.\n")
+
+
+
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+#####################################################
+
+
+## Save projP_3
+
+saveArchRProject(ArchRProj = projP_3, outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", load = FALSE)
+
