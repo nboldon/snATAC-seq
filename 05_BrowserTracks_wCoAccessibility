@@ -1,0 +1,441 @@
+#####################################################
+#####################################################
+## BROWSER TRACK GENERATION FOR TOP DIFFERENTIAL PEAKS
+#####################################################
+#####################################################
+
+library(ArchR)
+library(ggplot2)
+library(dplyr)
+
+# Load project if needed
+projP_3 <- loadArchRProject(path = "/Volumes/DataBox2/Save-ProjP_3", 
+                            force = FALSE, showLogo = FALSE)
+
+#####################################################
+## STEP 1: LOAD AND IDENTIFY TOP PEAKS BY CLUSTER
+#####################################################
+
+cat("LOADING DIFFERENTIAL PEAK DATA\n")
+
+# Get list of all combined peak files
+peak_files <- list.files(pattern = "_all_peak_comparisons_combined.csv")
+
+if(length(peak_files) == 0) {
+  stop("No combined peak files found! Check working directory: ", getwd())
+}
+
+cat(paste("Found", length(peak_files), "combined peak files\n\n"))
+
+# Load all peak data
+all_peaks_list <- list()
+
+for(file in peak_files) {
+  cluster_name <- gsub("_all_peak_comparisons_combined.csv", "", file)
+  
+  df <- read.csv(file, row.names = 1, stringsAsFactors = FALSE)
+  
+  if(nrow(df) > 0) {
+    df$cluster <- cluster_name
+    all_peaks_list[[cluster_name]] <- df
+    cat(paste("  ✓", cluster_name, ":", nrow(df), "peaks\n"))
+  }
+}
+
+# Combine all peaks
+if(length(all_peaks_list) > 0) {
+  all_peaks <- do.call(rbind, all_peaks_list)
+  cat(paste("\n✓ Total peaks loaded:", nrow(all_peaks), "\n\n"))
+} else {
+  stop("No peak data found!")
+}
+
+#####################################################
+## STEP 2: GET TOP 10 PEAKS PER CLUSTER
+#####################################################
+
+cat("SELECTING TOP PEAKS BY CLUSTER\n")
+
+# Find gene column name
+gene_col <- NULL
+possible_gene_cols <- c("nearestGene", "NearestGene", "gene", "Gene", "symbol")
+for(col in possible_gene_cols) {
+  if(col %in% colnames(all_peaks)) {
+    gene_col <- col
+    break
+  }
+}
+
+if(is.null(gene_col)) {
+  warning("No gene column found - will use genomic coordinates only")
+  all_peaks$nearestGene <- paste0(all_peaks$seqnames, ":", all_peaks$start, "-", all_peaks$end)
+  gene_col <- "nearestGene"
+} else {
+  colnames(all_peaks)[colnames(all_peaks) == gene_col] <- "nearestGene"
+}
+
+# Get top 10 peaks per cluster (by FDR, then by Log2FC)
+top_peaks_per_cluster <- all_peaks %>%
+  group_by(cluster) %>%
+  arrange(FDR, desc(abs(Log2FC))) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+
+cat(paste("Selected", nrow(top_peaks_per_cluster), "top peaks across all clusters\n\n"))
+
+# Get unique genes from top peaks
+top_genes_per_cluster <- top_peaks_per_cluster %>%
+  group_by(cluster) %>%
+  summarise(
+    n_peaks = n(),
+    genes = paste(unique(nearestGene), collapse = ";"),
+    top_gene = first(nearestGene),
+    min_FDR = min(FDR, na.rm = TRUE),
+    max_absLog2FC = max(abs(Log2FC), na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(min_FDR, desc(max_absLog2FC))
+
+write.csv(top_genes_per_cluster, "Top_Genes_by_Cluster_for_Browser_Tracks.csv", row.names = FALSE)
+
+cat("Cluster summaries:\n")
+print(top_genes_per_cluster)
+cat("\n")
+
+#####################################################
+## STEP 3: ADD CO-ACCESSIBILITY (if not already done)
+#####################################################
+
+# Check if co-accessibility already exists
+if(!"Peak2GeneLinks" %in% names(projP_3@projectMetadata)) {
+  
+  cat("Adding co-accessibility links...\n")
+  
+  tryCatch({
+    projP_3 <- addPeak2GeneLinks(
+      ArchRProj = projP_3,
+      reducedDims = "IterativeLSI",
+      useMatrix = "GeneScoreMatrix"
+    )
+    cat("✓ Co-accessibility links added successfully!\n\n")
+  }, error = function(e) {
+    cat("⚠ Could not add co-accessibility links:", e$message, "\n")
+    cat("  Continuing without Peak2Gene links...\n\n")
+  })
+  
+} else {
+  cat("✓ Co-accessibility links already present.\n\n")
+}
+
+#####################################################
+## STEP 4: CREATE BROWSER TRACK FUNCTIONS
+#####################################################
+
+# Function to create browser tracks for a gene
+create_gene_browser_track <- function(gene_symbol, 
+                                      upstream = 50000, 
+                                      downstream = 50000) {
+  
+  cat(paste("Creating browser track for", gene_symbol, "...\n"))
+  
+  tryCatch({
+    
+    # Check if Peak2Gene links exist
+    has_links <- "Peak2GeneLinks" %in% names(projP_3@projectMetadata)
+    
+    # Build plot arguments
+    plot_args <- list(
+      ArchRProj = projP_3,
+      groupBy = "sample",
+      geneSymbol = gene_symbol,
+      upstream = upstream,
+      downstream = downstream,
+      features = getPeakSet(projP_3),
+      plotSummary = c("bulkTrack", "geneTrack", "featureTrack"),
+      sizes = c(10, 1.5, 1.5),
+      pal = c("#D62828", "#F77F00", "#FCBF49", "#06A77D")
+    )
+    
+    # Add loops if available
+    if(has_links) {
+      plot_args$loops <- getPeak2GeneLinks(projP_3)
+      plot_args$plotSummary <- c("bulkTrack", "geneTrack", "loopTrack", "featureTrack")
+      plot_args$sizes <- c(10, 1.5, 3, 1.5)
+    }
+    
+    p <- do.call(plotBrowserTrack, plot_args)
+    
+    # Save the plot
+    pdf_filename <- paste0("BrowserTrack_", gene_symbol, "_by_Sample.pdf")
+    
+    pdf(pdf_filename, width = 12, height = 8)
+    grid::grid.newpage()
+    grid::grid.draw(p[[gene_symbol]])
+    dev.off()
+    
+    cat(paste("  ✓ Saved:", pdf_filename, "\n"))
+    
+    return(TRUE)
+    
+  }, error = function(e) {
+    cat(paste("  ✗ Error for", gene_symbol, ":", e$message, "\n"))
+    return(FALSE)
+  })
+}
+
+# Function to create cluster-specific tracks
+create_cluster_browser_track <- function(gene_symbol, 
+                                         cluster_name,
+                                         upstream = 50000, 
+                                         downstream = 50000) {
+  
+  cat(paste("Creating track for", gene_symbol, "in", cluster_name, "...\n"))
+  
+  tryCatch({
+    
+    # Subset to specific cluster
+    projSubset <- projP_3[projP_3$Clusters == cluster_name, ]
+    
+    # Check if Peak2Gene links exist
+    has_links <- "Peak2GeneLinks" %in% names(projP_3@projectMetadata)
+    
+    # Build plot arguments
+    plot_args <- list(
+      ArchRProj = projSubset,
+      groupBy = "sample",
+      geneSymbol = gene_symbol,
+      upstream = upstream,
+      downstream = downstream,
+      features = getPeakSet(projSubset),
+      plotSummary = c("bulkTrack", "geneTrack", "featureTrack"),
+      sizes = c(10, 1.5, 1.5),
+      pal = c("#D62828", "#F77F00", "#FCBF49", "#06A77D")
+    )
+    
+    # Add loops if available
+    if(has_links) {
+      plot_args$loops <- getPeak2GeneLinks(projSubset)
+      plot_args$plotSummary <- c("bulkTrack", "geneTrack", "loopTrack", "featureTrack")
+      plot_args$sizes <- c(10, 1.5, 3, 1.5)
+    }
+    
+    p <- do.call(plotBrowserTrack, plot_args)
+    
+    # Save the plot
+    pdf_filename <- paste0("BrowserTrack_", gene_symbol, "_", cluster_name, "_by_Sample.pdf")
+    
+    pdf(pdf_filename, width = 12, height = 8)
+    grid::grid.newpage()
+    grid::grid.draw(p[[gene_symbol]])
+    dev.off()
+    
+    cat(paste("  ✓ Saved:", pdf_filename, "\n"))
+    
+    return(TRUE)
+    
+  }, error = function(e) {
+    cat(paste("  ✗ Error:", e$message, "\n"))
+    return(FALSE)
+  })
+}
+
+#####################################################
+## STEP 5: GENERATE TRACKS FOR TOP GENES
+#####################################################
+
+cat("\n========================================\n")
+cat("GENERATING BROWSER TRACKS\n")
+cat("========================================\n\n")
+
+# Create directory for browser tracks
+browser_dir <- "BrowserTracks_TopPeaks"
+if(!dir.exists(browser_dir)) dir.create(browser_dir, recursive = TRUE)
+setwd(browser_dir)
+
+# Generate tracks for top gene from each cluster
+top_genes_to_plot <- top_genes_per_cluster$top_gene
+
+cat(paste("Generating tracks for", length(top_genes_to_plot), "top genes (one per cluster)...\n\n"))
+
+success_count <- 0
+for(gene in top_genes_to_plot) {
+  success <- create_gene_browser_track(
+    gene_symbol = gene,
+    upstream = 50000,
+    downstream = 50000
+  )
+  if(success) success_count <- success_count + 1
+}
+
+cat(paste("\n✓ Successfully created", success_count, "of", length(top_genes_to_plot), 
+          "browser tracks\n\n"))
+
+setwd("..")
+
+#####################################################
+## STEP 6: GENERATE CLUSTER-SPECIFIC TRACKS
+#####################################################
+
+cat("========================================\n")
+cat("CLUSTER-SPECIFIC BROWSER TRACKS\n")
+cat("========================================\n\n")
+
+browser_cluster_dir <- "BrowserTracks_TopPeaks_ByCluster"
+if(!dir.exists(browser_cluster_dir)) dir.create(browser_cluster_dir, recursive = TRUE)
+setwd(browser_cluster_dir)
+
+# For each cluster, create tracks for top 3 genes
+clusters_to_process <- unique(top_peaks_per_cluster$cluster)
+
+cat(paste("Processing", length(clusters_to_process), "clusters...\n\n"))
+
+for(cluster in clusters_to_process) {
+  
+  cat(paste("\n--- Cluster:", cluster, "---\n"))
+  
+  # Get top 3 genes for this cluster
+  cluster_genes <- top_peaks_per_cluster %>%
+    filter(cluster == !!cluster) %>%
+    arrange(FDR, desc(abs(Log2FC))) %>%
+    head(3) %>%
+    pull(nearestGene) %>%
+    unique()
+  
+  cat(paste("Top genes:", paste(cluster_genes, collapse = ", "), "\n"))
+  
+  for(gene in cluster_genes) {
+    create_cluster_browser_track(
+      gene_symbol = gene,
+      cluster_name = cluster,
+      upstream = 50000,
+      downstream = 50000
+    )
+  }
+}
+
+setwd("..")
+
+#####################################################
+## STEP 7: FOCUS ON HIGH-PRIORITY CLUSTERS
+#####################################################
+
+cat("\n========================================\n")
+cat("HIGH-PRIORITY CLUSTERS (C18, C15, C1)\n")
+cat("========================================\n\n")
+
+browser_priority_dir <- "BrowserTracks_PriorityClusters"
+if(!dir.exists(browser_priority_dir)) dir.create(browser_priority_dir, recursive = TRUE)
+setwd(browser_priority_dir)
+
+# Based on your earlier analysis: C18 (11363 peaks), C15 (4777 peaks), C1 (2075 peaks)
+priority_clusters <- c("C18", "C15", "C1")
+
+for(cluster in priority_clusters) {
+  
+  if(cluster %in% clusters_to_process) {
+    
+    cat(paste("\n--- Processing priority cluster:", cluster, "---\n"))
+    
+    # Get top 10 genes for this cluster
+    cluster_top_genes <- top_peaks_per_cluster %>%
+      filter(cluster == !!cluster) %>%
+      arrange(FDR, desc(abs(Log2FC))) %>%
+      head(10) %>%
+      pull(nearestGene) %>%
+      unique()
+    
+    cat(paste("Generating tracks for", length(cluster_top_genes), "genes\n"))
+    
+    for(gene in cluster_top_genes) {
+      create_cluster_browser_track(
+        gene_symbol = gene,
+        cluster_name = cluster,
+        upstream = 50000,
+        downstream = 50000
+      )
+    }
+  } else {
+    cat(paste("⚠", cluster, "not found in peak data\n"))
+  }
+}
+
+setwd("..")
+
+#####################################################
+## STEP 8: CREATE SUMMARY
+#####################################################
+
+cat("\n========================================\n")
+cat("CREATING SUMMARY DOCUMENT\n")
+cat("========================================\n\n")
+
+# Summary of generated tracks
+track_summary <- data.frame(
+  Cluster = top_genes_per_cluster$cluster,
+  Top_Gene = top_genes_per_cluster$top_gene,
+  n_peaks_in_top10 = top_genes_per_cluster$n_peaks,
+  min_FDR = top_genes_per_cluster$min_FDR,
+  max_absLog2FC = top_genes_per_cluster$max_absLog2FC,
+  track_created = file.exists(paste0("BrowserTracks_TopPeaks/BrowserTrack_", 
+                                     top_genes_per_cluster$top_gene, 
+                                     "_by_Sample.pdf"))
+)
+
+write.csv(track_summary, "Browser_Track_Summary_TopPeaks.csv", row.names = FALSE)
+
+cat("Summary statistics:\n")
+print(track_summary)
+
+cat("\n========================================\n")
+cat("BROWSER TRACK GENERATION COMPLETE!\n")
+cat("========================================\n\n")
+
+cat("GENERATED DIRECTORIES:\n")
+cat("======================\n")
+cat("1. BrowserTracks_TopPeaks/\n")
+cat("   - Top gene from each cluster\n")
+cat("   - Grouped by sample (sample1-4)\n\n")
+
+cat("2. BrowserTracks_TopPeaks_ByCluster/\n")
+cat("   - Top 3 genes per cluster\n")
+cat("   - Cluster-specific views\n\n")
+
+cat("3. BrowserTracks_PriorityClusters/\n")
+cat("   - Top 10 genes for C18, C15, C1\n")
+cat("   - Your highest differential peak clusters\n\n")
+
+cat("FILES CREATED:\n")
+cat("==============\n")
+cat("• Top_Genes_by_Cluster_for_Browser_Tracks.csv\n")
+cat("• Browser_Track_Summary_TopPeaks.csv\n")
+cat("• Individual PDF tracks for each gene\n\n")
+
+cat("TRACK FEATURES:\n")
+cat("===============\n")
+cat("• Bulk accessibility (colored by sample)\n")
+cat("• Gene annotations\n")
+if("Peak2GeneLinks" %in% names(projP_3@projectMetadata)) {
+  cat("• Co-accessibility loops\n")
+}
+cat("• Differential peaks highlighted\n")
+cat("• ±50kb window around TSS\n\n")
+
+cat("NEXT STEPS:\n")
+cat("===========\n")
+cat("1. Review Browser_Track_Summary_TopPeaks.csv\n")
+cat("2. Start with BrowserTracks_PriorityClusters/\n")
+cat("3. Look for:\n")
+cat("   - Clear differential accessibility patterns\n")
+cat("   - Sample-specific peak changes\n")
+cat("   - Potential regulatory regions\n")
+cat("4. Select candidates for experimental validation\n\n")
+
+#####################################################
+## STEP 9: SAVE PROJECT
+#####################################################
+
+saveArchRProject(ArchRProj = projP_3, 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 load = FALSE)
+
+cat("Project saved successfully!\n\n")
