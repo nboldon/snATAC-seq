@@ -458,12 +458,6 @@ cat("   - Red: Motif unions (bidirectional)\n")
 cat("   - Orange: Other significant motifs\n\n")
 cat("4. SUMMARY FILE: Motif_Union_Summary_2025-10-10.csv\n\n")
 
-cat("NEXT STEPS:\n")
-cat("===========\n")
-cat("• Review motif union files for high-confidence TF activity changes\n")
-cat("• Cross-reference motif unions with gene unions for TF-target relationships\n")
-cat("• Perform TF footprinting analysis on motif unions\n")
-cat("• Validate key TFs experimentally\n\n")
 
 # Save project
 saveArchRProject(ArchRProj = projP_3, outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", load = FALSE)
