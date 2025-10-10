@@ -621,11 +621,6 @@ if(nrow(comp_cluster_combos) > 0) {
 #####################################################
 #####################################################
 
-cat("\n========================================\n")
-cat("COMPARISON-SPECIFIC ENRICHMENT ANALYSIS\n")
-cat("(All clusters combined per comparison)\n")
-cat("========================================\n\n")
-
 # Create subdirectory
 comparison_dir <- paste0(enrichment_dir, "/By_Comparison")
 if(!dir.exists(comparison_dir)) dir.create(comparison_dir, recursive = TRUE)
