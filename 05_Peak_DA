@@ -508,13 +508,12 @@ for(cluster in all_clusters) {
 }
 
 
-###############################################
-## IDENTIFY GENE UNIONS (Genes in BOTH directions)
-###############################################
+################################################# 
+# IDENTIFY RECIPROCAL PEAKS (Peaks significant in BOTH comparison directions)
+#################################################
 
-identify_gene_unions <- function(cluster_name) {
-  
-  print(paste("\n=== Finding Gene Unions for", cluster_name, "==="))
+identify_reciprocal_peaks <- function(cluster_name) {
+  print(paste("\n=== Finding Reciprocal Peaks for", cluster_name, "==="))
   
   combined_file <- paste0(cluster_name, "_all_peak_comparisons_combined.csv")
   if(!file.exists(combined_file)) {
@@ -529,7 +528,7 @@ identify_gene_unions <- function(cluster_name) {
   df$sample1 <- sapply(strsplit(df$Comparison, "_vs_"), `[`, 1)
   df$sample2 <- sapply(strsplit(df$Comparison, "_vs_"), `[`, 2)
   
-  # Get gene names (handle different possible column names)
+  # Get gene names for annotation (handle different possible column names)
   gene_col <- NULL
   possible_gene_cols <- c("nearestGene", "NearestGene", "gene", "Gene", "symbol")
   for(col in possible_gene_cols) {
@@ -540,12 +539,12 @@ identify_gene_unions <- function(cluster_name) {
   }
   
   if(is.null(gene_col)) {
-    print(paste("  Warning: No gene column found for", cluster_name))
+    print(paste("  Warning: No gene annotation column found for", cluster_name))
     return(NULL)
   }
   
-  # Find gene unions for each sample pair
-  union_results <- list()
+  # Find reciprocal peaks for each sample pair
+  reciprocal_results <- list()
   
   # Get all unique sample pairs (unordered)
   all_comparisons <- unique(df$Comparison)
@@ -570,180 +569,196 @@ identify_gene_unions <- function(cluster_name) {
     s1 <- samples[1]
     s2 <- samples[2]
     
-    # Get genes from both directions
+    # Get peaks from both directions
     forward_comp <- paste0(s1, "_vs_", s2)
     reverse_comp <- paste0(s2, "_vs_", s1)
     
-    genes_forward <- df[df$Comparison == forward_comp, gene_col]
-    genes_reverse <- df[df$Comparison == reverse_comp, gene_col]
+    # Create unique peak identifiers based on genomic coordinates
+    df$peak_id <- paste(df$seqnames, df$start, df$end, sep = "_")
     
-    # Remove NA values
-    genes_forward <- unique(na.omit(genes_forward))
-    genes_reverse <- unique(na.omit(genes_reverse))
+    peaks_forward <- df[df$Comparison == forward_comp, ]
+    peaks_reverse <- df[df$Comparison == reverse_comp, ]
     
-    if(length(genes_forward) == 0 || length(genes_reverse) == 0) next
+    if(nrow(peaks_forward) == 0 || nrow(peaks_reverse) == 0) next
     
-    # Find UNION (genes in BOTH directions)
-    gene_union <- intersect(genes_forward, genes_reverse)
+    # Find RECIPROCAL peaks (same genomic coordinates in BOTH directions)
+    reciprocal_peak_ids <- intersect(peaks_forward$peak_id, peaks_reverse$peak_id)
     
-    if(length(gene_union) > 0) {
-      print(paste("  Found", length(gene_union), "union genes for", s1, "vs", s2))
-      print(paste("    (", length(genes_forward), "in", forward_comp, ",", 
-                  length(genes_reverse), "in", reverse_comp, ")"))
+    if(length(reciprocal_peak_ids) > 0) {
+      print(paste("  Found", length(reciprocal_peak_ids), "reciprocal peaks for", s1, "vs", s2))
+      print(paste("    (", nrow(peaks_forward), "peaks in", forward_comp, ",", 
+                  nrow(peaks_reverse), "peaks in", reverse_comp, ")"))
       
-      # Get detailed info for union genes
-      forward_data <- df[df$Comparison == forward_comp & df[[gene_col]] %in% gene_union, ]
-      reverse_data <- df[df$Comparison == reverse_comp & df[[gene_col]] %in% gene_union, ]
+      # Get detailed info for reciprocal peaks
+      forward_data <- peaks_forward[peaks_forward$peak_id %in% reciprocal_peak_ids, ]
+      reverse_data <- peaks_reverse[peaks_reverse$peak_id %in% reciprocal_peak_ids, ]
       
-      # Merge data for union genes
-      union_df <- merge(
-        forward_data[, c(gene_col, "seqnames", "start", "end", "Log2FC", "FDR")],
-        reverse_data[, c(gene_col, "Log2FC", "FDR")],
-        by = gene_col,
+      # Merge data for reciprocal peaks
+      reciprocal_df <- merge(
+        forward_data[, c("peak_id", "seqnames", "start", "end", gene_col, "Log2FC", "FDR")],
+        reverse_data[, c("peak_id", "Log2FC", "FDR")],
+        by = "peak_id",
         suffixes = c(paste0("_", forward_comp), paste0("_", reverse_comp))
       )
       
-      colnames(union_df)[1] <- "Gene"
-      union_df$comparison_pair <- pair_id
-      union_df$cluster <- cluster_name
+      # Rename for clarity
+      colnames(reciprocal_df)[colnames(reciprocal_df) == gene_col] <- "nearestGene"
+      reciprocal_df$comparison_pair <- pair_id
+      reciprocal_df$cluster <- cluster_name
       
       # IMPROVED DIRECTIONALITY METRICS
-      fc_forward <- union_df[[paste0("Log2FC_", forward_comp)]]
-      fc_reverse <- union_df[[paste0("Log2FC_", reverse_comp)]]
-      fdr_forward <- union_df[[paste0("FDR_", forward_comp)]]
-      fdr_reverse <- union_df[[paste0("FDR_", reverse_comp)]]
+      fc_forward <- reciprocal_df[[paste0("Log2FC_", forward_comp)]]
+      fc_reverse <- reciprocal_df[[paste0("Log2FC_", reverse_comp)]]
+      fdr_forward <- reciprocal_df[[paste0("FDR_", forward_comp)]]
+      fdr_reverse <- reciprocal_df[[paste0("FDR_", reverse_comp)]]
       
       # 1. Biological concordance (expected: opposite signs = same biological change)
-      union_df$biologically_concordant <- (fc_forward * fc_reverse) < 0
+      reciprocal_df$biologically_concordant <- (fc_forward * fc_reverse) < 0
       
       # 2. Effect size consistency (magnitudes should be similar)
-      union_df$fc_ratio <- abs(fc_forward) / abs(fc_reverse)
-      union_df$fc_magnitude_consistent <- (union_df$fc_ratio > 0.5 & union_df$fc_ratio < 2.0)
+      reciprocal_df$fc_ratio <- abs(fc_forward) / abs(fc_reverse)
+      reciprocal_df$fc_magnitude_consistent <- (reciprocal_df$fc_ratio > 0.5 & reciprocal_df$fc_ratio < 2.0)
       
       # 3. Statistical robustness (both significant)
-      union_df$both_highly_significant <- (fdr_forward < 0.01) & (fdr_reverse < 0.01)
-      union_df$mean_FDR <- (fdr_forward + fdr_reverse) / 2
+      reciprocal_df$both_highly_significant <- (fdr_forward < 0.01) & (fdr_reverse < 0.01)
+      reciprocal_df$mean_FDR <- (fdr_forward + fdr_reverse) / 2
+      reciprocal_df$mean_absLog2FC <- (abs(fc_forward) + abs(fc_reverse)) / 2
       
       # 4. Overall quality score
-      union_df$robust_union <- union_df$biologically_concordant & 
-        union_df$fc_magnitude_consistent & 
-        union_df$both_highly_significant
+      reciprocal_df$robust_reciprocal <- reciprocal_df$biologically_concordant & 
+        reciprocal_df$fc_magnitude_consistent & 
+        reciprocal_df$both_highly_significant
       
-      # 5. Which sample has higher accessibility (biological interpretation)
-      union_df$higher_in_sample <- ifelse(
+      # 5. Which sample has higher accessibility at this peak
+      reciprocal_df$higher_accessibility_in <- ifelse(
         fc_forward > 0, 
         s1,  # positive Log2FC in forward means s1 > s2
         s2   # negative Log2FC in forward means s2 > s1
       )
       
       # 6. Flag potential issues
-      union_df$potential_issue <- !union_df$biologically_concordant | !union_df$fc_magnitude_consistent
+      reciprocal_df$potential_issue <- !reciprocal_df$biologically_concordant | !reciprocal_df$fc_magnitude_consistent
       
       # Add interpretable labels
-      union_df$interpretation <- ifelse(
-        union_df$robust_union,
-        paste0("Robust: ", union_df$higher_in_sample, " > ", 
-               ifelse(union_df$higher_in_sample == s1, s2, s1)),
+      reciprocal_df$interpretation <- ifelse(
+        reciprocal_df$robust_reciprocal,
+        paste0("Robust: Peak more accessible in ", reciprocal_df$higher_accessibility_in, 
+               " (vs ", ifelse(reciprocal_df$higher_accessibility_in == s1, s2, s1), ")"),
         ifelse(
-          !union_df$biologically_concordant,
+          !reciprocal_df$biologically_concordant,
           "WARNING: Contradictory directions",
           ifelse(
-            !union_df$fc_magnitude_consistent,
+            !reciprocal_df$fc_magnitude_consistent,
             "WARNING: Inconsistent effect sizes",
             "Moderate confidence"
           )
         )
       )
       
-      # Save results
-      filename <- paste0(cluster_name, "_GENE_UNION_", s1, "_vs_", s2, ".csv")
-      write.csv(union_df, filename, row.names = FALSE)
+      # Reorder columns for clarity
+      col_order <- c("peak_id", "seqnames", "start", "end", "nearestGene",
+                     "cluster", "comparison_pair", "higher_accessibility_in",
+                     paste0("Log2FC_", forward_comp), paste0("FDR_", forward_comp),
+                     paste0("Log2FC_", reverse_comp), paste0("FDR_", reverse_comp),
+                     "mean_FDR", "mean_absLog2FC", "fc_ratio",
+                     "biologically_concordant", "fc_magnitude_consistent", 
+                     "both_highly_significant", "robust_reciprocal",
+                     "potential_issue", "interpretation")
       
-      union_results[[pair_id]] <- union_df
+      reciprocal_df <- reciprocal_df[, col_order[col_order %in% colnames(reciprocal_df)]]
+      
+      # Save results
+      filename <- paste0(cluster_name, "_RECIPROCAL_PEAKS_", s1, "_vs_", s2, ".csv")
+      write.csv(reciprocal_df, filename, row.names = FALSE)
+      
+      reciprocal_results[[pair_id]] <- reciprocal_df
     } else {
-      print(paste("  No union genes for", s1, "vs", s2))
+      print(paste("  No reciprocal peaks for", s1, "vs", s2))
     }
   }
   
-  # Combine all union results for this cluster
-  if(length(union_results) > 0) {
-    all_unions <- do.call(rbind, union_results)
-    write.csv(all_unions, 
-              paste0(cluster_name, "_ALL_GENE_UNIONS.csv"),
+  # Combine all reciprocal results for this cluster
+  if(length(reciprocal_results) > 0) {
+    all_reciprocal <- do.call(rbind, reciprocal_results)
+    write.csv(all_reciprocal, 
+              paste0(cluster_name, "_ALL_RECIPROCAL_PEAKS.csv"),
               row.names = FALSE)
     
-    print(paste("  ✓ Total union genes in", cluster_name, ":", nrow(all_unions)))
-    return(all_unions)
+    print(paste("  ✓ Total reciprocal peaks in", cluster_name, ":", nrow(all_reciprocal)))
+    return(all_reciprocal)
   }
   
   return(NULL)
 }
 
-
-# Run gene union analysis for all clusters
-all_gene_union_results <- list()
-
+# Run reciprocal peak analysis for all clusters
+all_reciprocal_peak_results <- list()
 for(cluster in all_clusters) {
-  result <- identify_gene_unions(cluster)
+  result <- identify_reciprocal_peaks(cluster)
   if(!is.null(result)) {
-    all_gene_union_results[[cluster]] <- result
+    all_reciprocal_peak_results[[cluster]] <- result
   }
 }
 
-# Create master summary of gene unions
-if(length(all_gene_union_results) > 0) {
-  master_gene_unions <- do.call(rbind, all_gene_union_results)
-  write.csv(master_gene_unions, 
-            "MASTER_ALL_GENE_UNIONS_ALL_CLUSTERS.csv",
+# Create master summary of reciprocal peaks
+if(length(all_reciprocal_peak_results) > 0) {
+  master_reciprocal_peaks <- do.call(rbind, all_reciprocal_peak_results)
+  write.csv(master_reciprocal_peaks, 
+            "MASTER_ALL_RECIPROCAL_PEAKS_ALL_CLUSTERS.csv",
             row.names = FALSE)
   
-  print("\n=== GENE UNION SUMMARY ===")
-  print(paste("Total gene unions across all clusters:", nrow(master_gene_unions)))
+  print("\n=== RECIPROCAL PEAK SUMMARY ===")
+  print(paste("Total reciprocal peaks across all clusters:", nrow(master_reciprocal_peaks)))
   
   # Summary statistics by cluster and comparison
-  union_summary <- master_gene_unions %>%
+  reciprocal_summary <- master_reciprocal_peaks %>%
     group_by(cluster, comparison_pair) %>%
     summarise(
-      n_union_genes = n(),
+      n_reciprocal_peaks = n(),
+      n_robust_peaks = sum(robust_reciprocal, na.rm = TRUE),
+      pct_robust = round(100 * n_robust_peaks / n(), 1),
       mean_FDR = round(mean(mean_FDR, na.rm = TRUE), 4),
       mean_absLog2FC = round(mean(mean_absLog2FC, na.rm = TRUE), 2),
       min_FDR = round(min(mean_FDR, na.rm = TRUE), 4),
       max_absLog2FC = round(max(mean_absLog2FC, na.rm = TRUE), 2),
-      top_genes = paste(head(Gene[order(mean_FDR)], 5), collapse = ";"),
+      top_genes = paste(head(nearestGene[order(mean_FDR)], 5), collapse = ";"),
       .groups = 'drop'
     ) %>%
     arrange(cluster, comparison_pair)
   
-  write.csv(union_summary, "Gene_Union_Summary_by_Cluster.csv", row.names = FALSE)
+  write.csv(reciprocal_summary, "Reciprocal_Peak_Summary_by_Cluster.csv", row.names = FALSE)
   
-  print("\nGene unions by cluster and comparison:")
-  print(union_summary)
+  print("\nReciprocal peaks by cluster and comparison:")
+  print(reciprocal_summary)
   
   # Summary by cluster only
-  cluster_summary <- master_gene_unions %>%
+  cluster_summary <- master_reciprocal_peaks %>%
     group_by(cluster) %>%
     summarise(
-      n_union_genes = n(),
+      n_reciprocal_peaks = n(),
+      n_robust_peaks = sum(robust_reciprocal, na.rm = TRUE),
+      pct_robust = round(100 * n_robust_peaks / n(), 1),
       n_comparisons = length(unique(comparison_pair)),
-      unique_genes = length(unique(Gene)),
+      unique_peaks = length(unique(peak_id)),
+      unique_genes = length(unique(nearestGene)),
       mean_FDR = round(mean(mean_FDR, na.rm = TRUE), 4),
       mean_absLog2FC = round(mean(mean_absLog2FC, na.rm = TRUE), 2),
       .groups = 'drop'
     ) %>%
-    arrange(desc(n_union_genes))
+    arrange(desc(n_reciprocal_peaks))
   
-  write.csv(cluster_summary, "Gene_Union_Summary_by_Cluster_Only.csv", row.names = FALSE)
+  write.csv(cluster_summary, "Reciprocal_Peak_Summary_by_Cluster_Only.csv", row.names = FALSE)
   
-  print("\nGene unions by cluster:")
+  print("\nReciprocal peaks by cluster:")
   print(cluster_summary)
   
-  # Visualization of gene unions
-  p_unions <- ggplot(union_summary, aes(x = cluster, y = n_union_genes, fill = comparison_pair)) +
+  # Visualization of reciprocal peaks
+  p_reciprocal <- ggplot(reciprocal_summary, aes(x = cluster, y = n_reciprocal_peaks, fill = comparison_pair)) +
     geom_bar(stat = "identity", position = "dodge") +
     labs(
-      title = "Gene Unions by Cluster",
-      subtitle = "Genes significant in BOTH directions of comparison",
-      y = "Number of Union Genes",
+      title = "Reciprocal Peaks by Cluster",
+      subtitle = "Peaks significant in BOTH directions of comparison (same genomic coordinates)",
+      y = "Number of Reciprocal Peaks",
       x = "Cluster",
       fill = "Comparison"
     ) +
@@ -754,14 +769,14 @@ if(length(all_gene_union_results) > 0) {
     ) +
     scale_fill_viridis_d()
   
-  ggsave("Gene_Unions_by_Cluster_Barplot.pdf", p_unions, width = 14, height = 7)
+  ggsave("Reciprocal_Peaks_by_Cluster_Barplot.pdf", p_reciprocal, width = 14, height = 7)
   
   # Plot effect sizes
-  p_effect <- ggplot(master_gene_unions, aes(x = cluster, y = mean_absLog2FC, fill = comparison_pair)) +
+  p_effect <- ggplot(master_reciprocal_peaks, aes(x = cluster, y = mean_absLog2FC, fill = comparison_pair)) +
     geom_boxplot() +
     labs(
-      title = "Effect Sizes of Gene Unions",
-      subtitle = "Mean absolute Log2FC across both directions",
+      title = "Effect Sizes of Reciprocal Peaks",
+      subtitle = "Mean absolute Log2FC across both comparison directions",
       y = "Mean |Log2FC|",
       x = "Cluster",
       fill = "Comparison"
@@ -770,11 +785,11 @@ if(length(all_gene_union_results) > 0) {
     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
     scale_fill_viridis_d()
   
-  ggsave("Gene_Union_Effect_Sizes.pdf", p_effect, width = 14, height = 7)
+  ggsave("Reciprocal_Peak_Effect_Sizes.pdf", p_effect, width = 14, height = 7)
   
-  # Create a gene-level summary (which genes appear most often)
-  gene_frequency <- master_gene_unions %>%
-    group_by(Gene) %>%
+  # Create a peak-level summary (which peaks appear most often)
+  peak_frequency <- master_reciprocal_peaks %>%
+    group_by(peak_id, seqnames, start, end, nearestGene) %>%
     summarise(
       n_occurrences = n(),
       clusters = paste(unique(cluster), collapse = ";"),
@@ -785,16 +800,34 @@ if(length(all_gene_union_results) > 0) {
     ) %>%
     arrange(desc(n_occurrences))
   
-  write.csv(gene_frequency, "Gene_Frequency_Across_Unions.csv", row.names = FALSE)
+  write.csv(peak_frequency, "Peak_Frequency_Across_Reciprocal_Sets.csv", row.names = FALSE)
   
-  print("\nMost frequent genes across all unions:")
-  print(head(gene_frequency, 30))
+  print("\nMost frequent peaks across all reciprocal sets:")
+  print(head(peak_frequency, 30))
+  
+  # Summary of genes near reciprocal peaks
+  gene_summary <- master_reciprocal_peaks %>%
+    group_by(nearestGene) %>%
+    summarise(
+      n_reciprocal_peaks_nearby = n(),
+      n_clusters = length(unique(cluster)),
+      clusters = paste(unique(cluster), collapse = ";"),
+      mean_FDR = round(mean(mean_FDR, na.rm = TRUE), 4),
+      mean_absLog2FC = round(mean(mean_absLog2FC, na.rm = TRUE), 2),
+      .groups = 'drop'
+    ) %>%
+    arrange(desc(n_reciprocal_peaks_nearby))
+  
+  write.csv(gene_summary, "Genes_Near_Reciprocal_Peaks_Summary.csv", row.names = FALSE)
+  
+  print("\nGenes with most nearby reciprocal peaks:")
+  print(head(gene_summary, 30))
 }
 
 
-###############################################
-## 9. EXPORT PEAK COORDINATES FOR IGV/UCSC
-###############################################
+################################################# 
+# EXPORT PEAK COORDINATES FOR IGV/UCSC
+################################################
 
 # Export significant peaks in BED format for genome browser visualization
 export_peaks_to_bed <- function(cluster_name) {
@@ -827,12 +860,11 @@ for(cluster in all_clusters) {
   export_peaks_to_bed(cluster)
 }
 
-
-###############################################
-## 10. SAVE PROJECT
-###############################################
+################################################# 
+# SAVE PROJECT
+################################################
 
 saveArchRProject(ArchRProj = projP_3, 
-                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3",
                  load = FALSE)
 
