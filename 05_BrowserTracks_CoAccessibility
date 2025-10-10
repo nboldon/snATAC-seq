@@ -469,6 +469,7 @@ create_cluster_browser_track <- function(gene_symbol, cluster_name, upstream = 5
   })
 }
 
+
 # Generate browser tracks
 # Priority 1
 if (length(priority1_top) > 0) {
@@ -546,106 +547,6 @@ for (cluster in c("C18", "C15", "C1")) {
 }
 setwd("..")
 
-
-
-#####################################################
-## STEP 2.5: GENERATE PRIORITY 1 TRACKS
-#####################################################
-
-if(length(priority1_top) > 0) {
-  cat("\n=== PRIORITY 1: PEAK + GENE SCORE ===\n\n")
-  
-  browser_dir1 <- "BrowserTracks_Priority1_Peak_AND_GeneScore"
-  if(!dir.exists(browser_dir1)) dir.create(browser_dir1, recursive = TRUE)
-  setwd(browser_dir1)
-  
-  genes_to_plot <- priority1_top[priority1_top %in% valid_genes]
-  
-  success_count <- 0
-  for(gene in genes_to_plot) {
-    if(create_gene_browser_track(gene)) success_count <- success_count + 1
-  }
-  
-  cat(paste("\n✓ Created", success_count, "of", length(genes_to_plot), "tracks\n\n"))
-  setwd("..")
-}
-
-#####################################################
-## STEP 2.6: GENERATE PRIORITY 2 TRACKS
-#####################################################
-
-cat("=== PRIORITY 2: MOST PEAKS ===\n\n")
-
-browser_dir2 <- "BrowserTracks_Priority2_Most_Peaks"
-if(!dir.exists(browser_dir2)) dir.create(browser_dir2, recursive = TRUE)
-setwd(browser_dir2)
-
-genes_to_plot <- head(priority2_top[priority2_top %in% valid_genes], 20)
-
-success_count <- 0
-for(gene in genes_to_plot) {
-  if(create_gene_browser_track(gene)) success_count <- success_count + 1
-}
-
-cat(paste("\n✓ Created", success_count, "of", length(genes_to_plot), "tracks\n\n"))
-setwd("..")
-
-#####################################################
-## STEP 2.7: CLUSTER-SPECIFIC TRACKS
-#####################################################
-
-cat("=== CLUSTER-SPECIFIC TRACKS ===\n\n")
-
-browser_dir3 <- "BrowserTracks_Priority3_By_Cluster"
-if(!dir.exists(browser_dir3)) dir.create(browser_dir3, recursive = TRUE)
-setwd(browser_dir3)
-
-priority3_genes_valid <- priority3_genes %>%
-  filter(nearestGene %in% valid_genes)
-
-for(cluster in unique(priority3_genes_valid$cluster)) {
-  cat(paste("\n--- Cluster:", cluster, "---\n"))
-  
-  cluster_genes <- priority3_genes_valid %>%
-    filter(cluster == !!cluster) %>%
-    pull(nearestGene)
-  
-  for(gene in cluster_genes) {
-    create_cluster_browser_track(gene, cluster)
-  }
-}
-
-setwd("..")
-
-#####################################################
-## STEP 2.8: HIGH-PRIORITY CLUSTERS
-#####################################################
-
-cat("\n=== HIGH-PRIORITY CLUSTERS (C18, C15, C1) ===\n\n")
-
-browser_dir4 <- "BrowserTracks_PriorityClusters"
-if(!dir.exists(browser_dir4)) dir.create(browser_dir4, recursive = TRUE)
-setwd(browser_dir4)
-
-for(cluster in c("C18", "C15", "C1")) {
-  cat(paste("\n--- Cluster:", cluster, "---\n"))
-  
-  cluster_genes <- all_peaks_annotated %>%
-    filter(cluster == !!cluster) %>%
-    group_by(nearestGene) %>%
-    summarise(min_FDR = min(FDR, na.rm = TRUE), .groups = 'drop') %>%
-    arrange(min_FDR) %>%
-    head(10) %>%
-    pull(nearestGene)
-  
-  cluster_genes <- cluster_genes[cluster_genes %in% valid_genes]
-  
-  for(gene in cluster_genes) {
-    create_cluster_browser_track(gene, cluster)
-  }
-}
-
-setwd("..")
 
 #####################################################
 ## FINAL SUMMARY
