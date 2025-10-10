@@ -1,0 +1,1165 @@
+
+library(ArchR)
+library(ggplot2)
+library(dplyr)
+
+setwd("/Volumes/DataBox2/archR_analysis")
+
+
+#####################################################
+#####################################################
+# PREREQUISITE: ADD GROUP COVERAGES
+#####################################################
+#####################################################
+
+
+cat("This step is required for footprinting and may take some time...\n\n")
+
+# Add group coverages by sample
+projP_3 <- addGroupCoverages(
+  ArchRProj = projP_3,
+  groupBy = "sample",
+  minCells = 40,
+  maxCells = 500,
+  maxFragments = 25 * 10^6,
+  minReplicates = 2,
+  force = TRUE
+)
+
+cat("Group coverages added successfully!\n\n")
+
+# Also add by Clusters for cluster-specific footprinting
+projP_3 <- addGroupCoverages(
+  ArchRProj = projP_3,
+  groupBy = "Clusters",
+  minCells = 40,
+  maxCells = 500,
+  maxFragments = 25 * 10^6,
+  minReplicates = 2,
+  force = TRUE
+)
+
+cat("Cluster-based group coverages added successfully!\n\n")
+
+# Save project with coverages
+saveArchRProject(ArchRProj = projP_3, 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 load = FALSE)
+
+#####################################################
+#####################################################
+# TF FOOTPRINTING - ALL DIFFERENTIALLY ACTIVE MOTIFS
+#####################################################
+#####################################################
+
+# Create output directory
+footprint_dir <- paste0(getOutputDirectory(projP_3), "/Plots/Footprints/")
+if(!dir.exists(footprint_dir)) dir.create(footprint_dir, recursive = TRUE)
+
+
+#####################################################
+# OPTION 1: Footprint by SAMPLE for each cluster comparison
+#####################################################
+
+cat("\n--- OPTION 1: Footprinting by Sample ---\n\n")
+
+comparison_pairs <- list(
+  list(s1 = "sample1", s2 = "sample2"),
+  list(s1 = "sample1", s2 = "sample3"),
+  list(s1 = "sample1", s2 = "sample4"),
+  list(s1 = "sample2", s2 = "sample3"),
+  list(s1 = "sample2", s2 = "sample4"),
+  list(s1 = "sample3", s2 = "sample4")
+)
+
+footprint_results_by_sample <- list()
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n=== Processing:", s1, "vs", s2, "===\n"))
+  
+  # Get common clusters
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) {
+    cat("  No common clusters\n")
+    next
+  }
+  
+  for(cluster in common_clusters) {
+    
+    cat(paste("\n  Cluster:", cluster, "\n"))
+    
+    # Check if motif markers exist for this cluster
+    markers_file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    markers_file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    # Combine motifs from both directions
+    all_motifs <- c()
+    
+    if(file.exists(markers_file1)) {
+      motifs1 <- read.csv(markers_file1, row.names = 1, stringsAsFactors = FALSE)
+      all_motifs <- c(all_motifs, motifs1$name)
+      cat(paste("    Found", nrow(motifs1), "motifs in direction 1\n"))
+    }
+    
+    if(file.exists(markers_file2)) {
+      motifs2 <- read.csv(markers_file2, row.names = 1, stringsAsFactors = FALSE)
+      all_motifs <- c(all_motifs, motifs2$name)
+      cat(paste("    Found", nrow(motifs2), "motifs in direction 2\n"))
+    }
+    
+    if(length(all_motifs) == 0) {
+      cat("    No motif markers found\n")
+      next
+    }
+    
+    # Get unique motifs
+    all_motifs <- unique(all_motifs)
+    cat(paste("    Total unique motifs:", length(all_motifs), "\n"))
+    
+    # Limit to top 15 motifs if too many (for performance)
+    if(length(all_motifs) > 15) {
+      # Prioritize motifs with highest absolute mean difference
+      if(file.exists(markers_file1)) {
+        motifs_df <- motifs1[motifs1$name %in% all_motifs, ]
+        motifs_df <- motifs_df[order(-abs(motifs_df$MeanDiff)), ]
+        all_motifs <- head(motifs_df$name, 15)
+        cat(paste("    Limited to top 15 motifs by effect size\n"))
+      } else {
+        all_motifs <- head(all_motifs, 15)
+      }
+    }
+    
+    # Get motif positions
+    motifPositions <- getPositions(projP_3)
+    
+    # Filter to motifs with known positions
+    motifs_to_plot <- all_motifs[all_motifs %in% names(motifPositions)]
+    
+    if(length(motifs_to_plot) == 0) {
+      cat("    No matching motif positions found\n")
+      next
+    }
+    
+    cat(paste("    Footprinting", length(motifs_to_plot), "motifs\n"))
+    
+    # Subset project to current cluster
+    clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+    
+    # Further subset to only the two samples being compared
+    clusterSubset <- clusterSubset[clusterSubset$sample %in% c(s1, s2)]
+    
+    cat(paste("    Cells in comparison:", length(clusterSubset$cellNames), "\n"))
+    
+    # Compute footprints
+    tryCatch({
+      footprints <- getFootprints(
+        ArchRProj = clusterSubset,
+        positions = motifPositions[motifs_to_plot],
+        groupBy = "sample"
+      )
+      
+      # Plot footprints
+      plotFootprints(
+        seFoot = footprints,
+        ArchRProj = clusterSubset,
+        normMethod = "Subtract",
+        plotName = paste0("Footprints_BySample_", s1, "_", s2, "_", cluster, "_2025-10-10"),
+        addDOC = FALSE,
+        smoothWindow = 5
+      )
+      
+      cat("    ✓ Footprints computed and saved successfully\n")
+      
+      footprint_results_by_sample[[paste0(s1, "_", s2, "_", cluster)]] <- footprints
+      
+    }, error = function(e) {
+      cat(paste("    ✗ Error:", e$message, "\n"))
+    })
+  }
+}
+
+cat(paste("\n\nTotal footprints by sample:", length(footprint_results_by_sample), "\n"))
+
+#####################################################
+# OPTION 2: Footprint by CLUSTER (all samples together)
+#####################################################
+
+cat("\n\n--- OPTION 2: Footprinting by Cluster ---\n")
+cat("(Shows motif accessibility across all clusters)\n\n")
+
+# Compile all unique motifs across all comparisons
+all_unique_motifs <- c()
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  for(cluster in common_clusters) {
+    
+    markers_file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    markers_file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    if(file.exists(markers_file1)) {
+      motifs <- read.csv(markers_file1, row.names = 1)$name
+      all_unique_motifs <- c(all_unique_motifs, motifs)
+    }
+    
+    if(file.exists(markers_file2)) {
+      motifs <- read.csv(markers_file2, row.names = 1)$name
+      all_unique_motifs <- c(all_unique_motifs, motifs)
+    }
+  }
+}
+
+all_unique_motifs <- unique(all_unique_motifs)
+
+cat(paste("Total unique differentially active motifs:", length(all_unique_motifs), "\n\n"))
+
+# If too many motifs, select top ones
+if(length(all_unique_motifs) > 30) {
+  cat("Too many motifs for single footprint plot. Selecting top 30 by frequency...\n")
+  
+  # Count motif frequency across comparisons
+  motif_freq <- table(unlist(lapply(list.files(pattern = "Motif_.*_markers.csv"), function(f) {
+    read.csv(f, row.names = 1)$name
+  })))
+  
+  motif_freq <- sort(motif_freq, decreasing = TRUE)
+  all_unique_motifs <- names(head(motif_freq, 30))
+}
+
+cat(paste("Footprinting", length(all_unique_motifs), "motifs across all clusters\n"))
+
+# Get motif positions
+motifPositions <- getPositions(projP_3)
+motifs_to_plot <- all_unique_motifs[all_unique_motifs %in% names(motifPositions)]
+
+cat(paste("Found positions for", length(motifs_to_plot), "motifs\n\n"))
+
+if(length(motifs_to_plot) > 0) {
+  
+  tryCatch({
+    # Compute footprints across all clusters
+    footprints_by_cluster <- getFootprints(
+      ArchRProj = projP_3,
+      positions = motifPositions[motifs_to_plot],
+      groupBy = "Clusters"
+    )
+    
+    # Plot footprints
+    plotFootprints(
+      seFoot = footprints_by_cluster,
+      ArchRProj = projP_3,
+      normMethod = "Subtract",
+      plotName = "Footprints_ByCluster_AllMotifs_2025-10-10",
+      addDOC = FALSE,
+      smoothWindow = 5
+    )
+    
+    cat("✓ Cluster footprints computed and saved successfully\n")
+    
+  }, error = function(e) {
+    cat(paste("✗ Error in cluster footprinting:", e$message, "\n"))
+  })
+}
+
+#####################################################
+# OPTION 3: Cluster-specific footprints (within each cluster)
+#####################################################
+
+cat("\n\n--- OPTION 3: Cluster-Specific Footprinting ---\n")
+cat("(Shows sample differences within individual clusters)\n\n")
+
+footprint_results_cluster_specific <- list()
+
+# Get all clusters with any motif differences
+all_clusters_with_motifs <- unique(unlist(lapply(comparison_pairs, function(pair) {
+  s1 <- pair$s1
+  s2 <- pair$s2
+  get_common_clusters(s1, s2)
+})))
+
+cat(paste("Clusters with motif differences:", paste(all_clusters_with_motifs, collapse = ", "), "\n\n"))
+
+for(cluster in all_clusters_with_motifs) {
+  
+  cat(paste("\n=== Cluster:", cluster, "===\n"))
+  
+  # Collect all motifs that are DA in this cluster
+  cluster_motifs <- c()
+  
+  for(pair in comparison_pairs) {
+    s1 <- pair$s1
+    s2 <- pair$s2
+    
+    markers_file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    markers_file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    if(file.exists(markers_file1)) {
+      motifs <- read.csv(markers_file1, row.names = 1)$name
+      cluster_motifs <- c(cluster_motifs, motifs)
+    }
+    
+    if(file.exists(markers_file2)) {
+      motifs <- read.csv(markers_file2, row.names = 1)$name
+      cluster_motifs <- c(cluster_motifs, motifs)
+    }
+  }
+  
+  cluster_motifs <- unique(cluster_motifs)
+  
+  if(length(cluster_motifs) == 0) {
+    cat("  No motifs found\n")
+    next
+  }
+  
+  cat(paste("  Unique motifs:", length(cluster_motifs), "\n"))
+  
+  # Limit to top 15 if too many
+  if(length(cluster_motifs) > 15) {
+    cluster_motifs <- head(cluster_motifs, 15)
+    cat("  Limited to top 15 motifs\n")
+  }
+  
+  # Get motif positions
+  motifPositions <- getPositions(projP_3)
+  motifs_to_plot <- cluster_motifs[cluster_motifs %in% names(motifPositions)]
+  
+  if(length(motifs_to_plot) == 0) {
+    cat("  No matching positions\n")
+    next
+  }
+  
+  cat(paste("  Footprinting", length(motifs_to_plot), "motifs\n"))
+  
+  # Subset to cluster
+  clusterSubset <- projP_3[projP_3$Clusters %in% cluster]
+  
+  tryCatch({
+    footprints <- getFootprints(
+      ArchRProj = clusterSubset,
+      positions = motifPositions[motifs_to_plot],
+      groupBy = "sample"
+    )
+    
+    plotFootprints(
+      seFoot = footprints,
+      ArchRProj = clusterSubset,
+      normMethod = "Subtract",
+      plotName = paste0("Footprints_ClusterSpecific_", cluster, "_2025-10-10"),
+      addDOC = FALSE,
+      smoothWindow = 5
+    )
+    
+    cat("  ✓ Footprints saved\n")
+    
+    footprint_results_cluster_specific[[cluster]] <- footprints
+    
+  }, error = function(e) {
+    cat(paste("  ✗ Error:", e$message, "\n"))
+  })
+}
+
+#####################################################
+# SUMMARY
+#####################################################
+
+cat("\n\n========================================\n")
+cat("FOOTPRINTING COMPLETE!\n")
+cat("========================================\n\n")
+
+cat("RESULTS SUMMARY:\n")
+cat("================\n")
+cat(paste("Option 1 - Sample comparisons:", length(footprint_results_by_sample), "footprints\n"))
+cat(paste("Option 2 - All clusters:", ifelse(exists("footprints_by_cluster"), "✓ Complete", "✗ Failed"), "\n"))
+cat(paste("Option 3 - Cluster-specific:", length(footprint_results_cluster_specific), "footprints\n\n"))
+
+cat("OUTPUT FILES:\n")
+cat("=============\n")
+cat(paste("Location:", footprint_dir, "\n\n"))
+cat("• Footprints_BySample_[s1]_[s2]_[cluster]_2025-10-10.pdf\n")
+cat("  - Compares two samples within a specific cluster\n")
+cat("  - Shows all DA motifs for that comparison\n\n")
+cat("• Footprints_ByCluster_AllMotifs_2025-10-10.pdf\n")
+cat("  - Shows motif activity across all clusters\n")
+cat("  - Includes top DA motifs from all comparisons\n\n")
+cat("• Footprints_ClusterSpecific_[cluster]_2025-10-10.pdf\n")
+cat("  - Shows sample differences within each cluster\n")
+cat("  - All DA motifs in that cluster\n\n")
+
+cat("INTERPRETATION:\n")
+cat("===============\n")
+cat("A good footprint shows:\n")
+cat("• Dip at motif center (TF protection)\n")
+cat("• Elevated signal in flanking regions (open chromatin)\n")
+cat("• Difference between samples = differential TF binding\n\n")
+
+
+# Save project
+saveArchRProject(ArchRProj = projP_3, 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 load = FALSE)
+
+cat("Project saved successfully!\n")
+
+
+
+
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+
+setwd("/Volumes/DataBox2/archR_analysis")
+
+
+#####################################################
+#####################################################
+# PART 2: TF FAMILY ENRICHMENT ANALYSIS
+# (Using ALL differentially active motifs)
+#####################################################
+#####################################################
+
+
+#####################################################
+# Function to extract TF family from motif name
+#####################################################
+
+extract_tf_family <- function(motif_name) {
+  # Motif names are typically in format: TFname_number
+  # Extract the TF name (everything before the last underscore)
+  tf_name <- gsub("_[0-9]+$", "", motif_name)
+  return(tf_name)
+}
+
+#####################################################
+# Compile all differentially active motifs
+#####################################################
+
+comparison_pairs <- list(
+  list(s1 = "sample1", s2 = "sample2"),
+  list(s1 = "sample1", s2 = "sample3"),
+  list(s1 = "sample1", s2 = "sample4"),
+  list(s1 = "sample2", s2 = "sample3"),
+  list(s1 = "sample2", s2 = "sample4"),
+  list(s1 = "sample3", s2 = "sample4")
+)
+
+# Helper function
+get_common_clusters <- function(sample1_name, sample2_name) {
+  sample1_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample1_name])
+  sample2_combinations <- unique(projP_3$sample_cluster[projP_3$sample == sample2_name])
+  
+  sample1_clusters <- gsub(paste0(sample1_name, "_"), "", sample1_combinations)
+  sample2_clusters <- gsub(paste0(sample2_name, "_"), "", sample2_combinations)
+  
+  common <- intersect(sample1_clusters, sample2_clusters)
+  return(common)
+}
+
+all_da_motifs <- data.frame()
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  comp_name <- paste0(s1, " vs ", s2)
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) next
+  
+  for(cluster in common_clusters) {
+    
+    # Load motifs from both directions
+    markers_file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    markers_file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    if(file.exists(markers_file1)) {
+      motif_data1 <- read.csv(markers_file1, row.names = 1, stringsAsFactors = FALSE)
+      
+      if(nrow(motif_data1) > 0) {
+        motif_data1$Comparison <- comp_name
+        motif_data1$Cluster <- cluster
+        motif_data1$Direction <- paste0(s1, " vs ", s2)
+        motif_data1$TF_Family <- sapply(motif_data1$name, extract_tf_family)
+        motif_data1$Motif_Name <- motif_data1$name
+        
+        all_da_motifs <- rbind(all_da_motifs, motif_data1)
+      }
+    }
+    
+    if(file.exists(markers_file2)) {
+      motif_data2 <- read.csv(markers_file2, row.names = 1, stringsAsFactors = FALSE)
+      
+      if(nrow(motif_data2) > 0) {
+        motif_data2$Comparison <- comp_name
+        motif_data2$Cluster <- cluster
+        motif_data2$Direction <- paste0(s2, " vs ", s1)
+        motif_data2$TF_Family <- sapply(motif_data2$name, extract_tf_family)
+        motif_data2$Motif_Name <- motif_data2$name
+        
+        all_da_motifs <- rbind(all_da_motifs, motif_data2)
+      }
+    }
+  }
+}
+
+cat(paste("Total DA motif instances:", nrow(all_da_motifs), "\n"))
+cat(paste("Unique motifs:", n_distinct(all_da_motifs$Motif_Name), "\n"))
+cat(paste("Unique TF families:", n_distinct(all_da_motifs$TF_Family), "\n\n"))
+
+if(nrow(all_da_motifs) > 0) {
+  
+  #####################################################
+  # TF Family Summary Statistics
+  #####################################################
+  
+  # Count TF family occurrences across all comparisons
+  tf_family_counts <- all_da_motifs %>%
+    group_by(TF_Family) %>%
+    summarise(
+      Total_Occurrences = n(),
+      N_Comparisons = n_distinct(Comparison),
+      N_Clusters = n_distinct(Cluster),
+      N_Unique_Motifs = n_distinct(Motif_Name),
+      Avg_Abs_MeanDiff = mean(abs(MeanDiff), na.rm = TRUE),
+      Max_Abs_MeanDiff = max(abs(MeanDiff), na.rm = TRUE),
+      Comparisons = paste(unique(Comparison), collapse = "; "),
+      Clusters = paste(sort(unique(Cluster)), collapse = "; "),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(Total_Occurrences))
+  
+  cat("\n=== TOP TF FAMILIES (by occurrence) ===\n")
+  print(head(tf_family_counts, 20))
+  cat("\n")
+  
+  # Save TF family summary
+  write.csv(tf_family_counts, 
+            "TF_Family_Summary_All_DA_Motifs_2025-10-10.csv", 
+            row.names = FALSE)
+  
+  #####################################################
+  # TF Families by Cluster - Heatmap
+  #####################################################
+  
+  cat("Creating TF family by cluster heatmap...\n")
+  
+  # Create matrix of TF family counts by cluster
+  tf_cluster_matrix <- all_da_motifs %>%
+    group_by(TF_Family, Cluster) %>%
+    summarise(Count = n(), .groups = "drop") %>%
+    pivot_wider(names_from = Cluster, values_from = Count, values_fill = 0) %>%
+    as.data.frame()
+  
+  rownames(tf_cluster_matrix) <- tf_cluster_matrix$TF_Family
+  tf_cluster_matrix <- tf_cluster_matrix[, -1]
+  tf_cluster_matrix <- as.matrix(tf_cluster_matrix)
+  
+  # Filter to TFs present in at least 2 clusters or with high activity
+  tf_cluster_matrix <- tf_cluster_matrix[rowSums(tf_cluster_matrix > 0) >= 2 | 
+                                           rowMaxs(tf_cluster_matrix) >= 3, ]
+  
+  if(nrow(tf_cluster_matrix) > 0) {
+    
+    pdf(paste0(getOutputDirectory(projP_3), "/Plots/TF_Family_Cluster_Heatmap_AllMotifs_2025-10-10.pdf"),
+        width = 12, height = 14)
+    
+    ht <- Heatmap(
+      tf_cluster_matrix,
+      name = "Count",
+      col = colorRamp2(c(0, quantile(tf_cluster_matrix[tf_cluster_matrix > 0], 0.5), 
+                         max(tf_cluster_matrix)), 
+                       c("white", "orange", "darkred")),
+      cluster_rows = TRUE,
+      cluster_columns = TRUE,
+      show_row_names = TRUE,
+      show_column_names = TRUE,
+      row_names_gp = gpar(fontsize = 8),
+      column_names_gp = gpar(fontsize = 10),
+      column_title = "TF Family Activity Across Clusters (DA Motif Count)",
+      heatmap_legend_param = list(title = "DA Motifs")
+    )
+    
+    draw(ht)
+    dev.off()
+    
+    cat("✓ TF family heatmap saved\n\n")
+  }
+  
+  #####################################################
+  # TF Families by Comparison Type
+  #####################################################
+  
+  tf_comparison_matrix <- all_da_motifs %>%
+    group_by(TF_Family, Comparison) %>%
+    summarise(Count = n(), .groups = "drop") %>%
+    pivot_wider(names_from = Comparison, values_from = Count, values_fill = 0)
+  
+  write.csv(tf_comparison_matrix, 
+            "TF_Family_By_Comparison_AllMotifs_2025-10-10.csv", 
+            row.names = FALSE)
+  
+  #####################################################
+  # Identify Shared vs Unique TF Families
+  #####################################################
+  
+  # Which TF families are active in multiple comparisons?
+  shared_tfs <- tf_family_counts %>%
+    filter(N_Comparisons >= 2) %>%
+    arrange(desc(N_Comparisons))
+  
+  cat("\n=== TF FAMILIES ACTIVE IN MULTIPLE COMPARISONS ===\n")
+  print(head(shared_tfs, 15))
+  cat("\n")
+  
+  write.csv(shared_tfs,
+            "TF_Families_Shared_Across_Comparisons_2025-10-10.csv",
+            row.names = FALSE)
+  
+  # Which TF families are comparison-specific?
+  specific_tfs <- tf_family_counts %>%
+    filter(N_Comparisons == 1) %>%
+    arrange(desc(Total_Occurrences))
+  
+  cat("\n=== COMPARISON-SPECIFIC TF FAMILIES ===\n")
+  print(head(specific_tfs, 15))
+  cat("\n")
+  
+  write.csv(specific_tfs,
+            "TF_Families_Comparison_Specific_2025-10-10.csv",
+            row.names = FALSE)
+  
+  #####################################################
+  # TF Families by Effect Size
+  #####################################################
+  
+  tf_by_effect_size <- tf_family_counts %>%
+    arrange(desc(Avg_Abs_MeanDiff)) %>%
+    select(TF_Family, Avg_Abs_MeanDiff, Max_Abs_MeanDiff, 
+           Total_Occurrences, N_Comparisons, N_Clusters)
+  
+  cat("\n=== TF FAMILIES BY EFFECT SIZE ===\n")
+  print(head(tf_by_effect_size, 15))
+  cat("\n")
+  
+  write.csv(tf_by_effect_size,
+            "TF_Families_By_Effect_Size_2025-10-10.csv",
+            row.names = FALSE)
+  
+} else {
+  cat("No DA motifs found for TF family analysis\n\n")
+}
+
+
+
+
+
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+
+
+#####################################################
+#####################################################
+# PART 3: MOTIF-GENE INTEGRATION
+# (Using ALL differentially active motifs)
+#####################################################
+#####################################################
+
+
+#####################################################
+# Get gene annotations and motif positions
+#####################################################
+
+getGeneCoords <- function(ArchRProj) {
+  geneAnnotation <- getGeneAnnotation(ArchRProj)
+  genes <- geneAnnotation$genes
+  
+  gene_df <- as.data.frame(genes)
+  gene_df$gene_name <- genes$symbol
+  gene_df$chr <- as.character(seqnames(genes))
+  gene_df$start <- start(genes)
+  gene_df$end <- end(genes)
+  gene_df$strand <- as.character(strand(genes))
+  gene_df$tss <- ifelse(gene_df$strand == "+", gene_df$start, gene_df$end)
+  
+  return(gene_df)
+}
+
+gene_coords <- getGeneCoords(projP_3)
+cat(paste("Loaded", nrow(gene_coords), "gene annotations\n"))
+
+motifPositions <- getPositions(projP_3)
+cat(paste("Loaded", length(motifPositions), "motif annotations\n\n"))
+
+#####################################################
+# Process each cluster comparison
+#####################################################
+
+all_tf_target_relationships <- data.frame()
+integration_summary_list <- list()
+
+for(pair in comparison_pairs) {
+  
+  s1 <- pair$s1
+  s2 <- pair$s2
+  
+  cat(paste("\n=== Integrating:", s1, "vs", s2, "===\n"))
+  
+  comp_name <- paste0(s1, " vs ", s2)
+  common_clusters <- get_common_clusters(s1, s2)
+  
+  if(length(common_clusters) == 0) {
+    cat("  No common clusters\n")
+    next
+  }
+  
+  for(cluster in common_clusters) {
+    
+    cat(paste("  Cluster:", cluster, "\n"))
+    
+    #####################################################
+    # Load ALL DA motifs for this cluster (both directions)
+    #####################################################
+    
+    all_motifs <- data.frame()
+    
+    markers_file1 <- paste0("Motif_", s1, "_vs_", s2, "_", cluster, "_markers.csv")
+    markers_file2 <- paste0("Motif_", s2, "_vs_", s1, "_", cluster, "_markers.csv")
+    
+    if(file.exists(markers_file1)) {
+      motifs1 <- read.csv(markers_file1, row.names = 1, stringsAsFactors = FALSE)
+      motifs1$Direction <- paste0(s1, " vs ", s2)
+      all_motifs <- rbind(all_motifs, motifs1)
+    }
+    
+    if(file.exists(markers_file2)) {
+      motifs2 <- read.csv(markers_file2, row.names = 1, stringsAsFactors = FALSE)
+      motifs2$Direction <- paste0(s2, " vs ", s1)
+      all_motifs <- rbind(all_motifs, motifs2)
+    }
+    
+    if(nrow(all_motifs) == 0) {
+      cat("    No DA motifs\n")
+      next
+    }
+    
+    # Extract TF families
+    all_motifs$TF_name <- sapply(all_motifs$name, extract_tf_family)
+    
+    # Remove duplicates (same motif in both directions) - keep first occurrence
+    all_motifs <- all_motifs[!duplicated(all_motifs$name), ]
+    
+    cat(paste("    DA motifs:", nrow(all_motifs), "\n"))
+    
+    #####################################################
+    # Load gene unions (differentially accessible genes)
+    #####################################################
+    
+    gene_union_file <- paste0(s1, "_", s2, "_", cluster, "_gene_unions.csv")
+    
+    if(!file.exists(gene_union_file)) {
+      cat("    No gene union file - using all DA genes from both directions\n")
+      
+      # Load genes from both directions
+      gene_file1 <- paste0(s1, "_vs_", s2, "_", cluster, "_markers.csv")
+      gene_file2 <- paste0(s2, "_vs_", s1, "_", cluster, "_markers.csv")
+      
+      all_genes <- data.frame()
+      
+      if(file.exists(gene_file1)) {
+        genes1 <- read.csv(gene_file1, row.names = 1)
+        all_genes <- rbind(all_genes, genes1)
+      }
+      
+      if(file.exists(gene_file2)) {
+        genes2 <- read.csv(gene_file2, row.names = 1)
+        all_genes <- rbind(all_genes, genes2)
+      }
+      
+      if(nrow(all_genes) == 0) {
+        cat("    No DA genes found\n")
+        next
+      }
+      
+      # Remove duplicates - keep first occurrence
+      gene_unions <- all_genes[!duplicated(all_genes$name), ]
+      
+    } else {
+      gene_unions <- read.csv(gene_union_file, stringsAsFactors = FALSE)
+    }
+    
+    cat(paste("    DA genes:", nrow(gene_unions), "\n"))
+    
+    #####################################################
+    # METHOD 1: Direct TF expression
+    #####################################################
+    
+    tf_genes_in_da <- intersect(all_motifs$TF_name, gene_unions$name)
+    
+    if(length(tf_genes_in_da) > 0) {
+      cat(paste("    TFs with both motif activity and gene DA:", length(tf_genes_in_da), "\n"))
+      cat(paste("      ", paste(tf_genes_in_da, collapse = ", "), "\n"))
+    }
+    
+    #####################################################
+    # METHOD 2: Distance-based TF-target assignment
+    #####################################################
+    
+    tf_target_relationships <- data.frame()
+    
+    # Get coordinates for DA genes
+    gene_da_coords <- gene_coords[gene_coords$gene_name %in% gene_unions$name, ]
+    
+    cat(paste("    Analyzing", nrow(gene_da_coords), "DA genes for TF binding\n"))
+    
+    for(tf in unique(all_motifs$TF_name)) {
+      
+      # Get all motif variants for this TF
+      motif_variants <- all_motifs$name[all_motifs$TF_name == tf]
+      
+      # Collect all genomic positions for this TF's motifs
+      all_tf_positions <- GRanges()
+      
+      for(motif_name in motif_variants) {
+        if(motif_name %in% names(motifPositions)) {
+          motif_gr <- motifPositions[[motif_name]]
+          all_tf_positions <- c(all_tf_positions, motif_gr)
+        }
+      }
+      
+      if(length(all_tf_positions) == 0) next
+      
+      # For each DA gene, find TF binding sites
+      for(i in 1:nrow(gene_da_coords)) {
+        
+        gene_name <- gene_da_coords$gene_name[i]
+        gene_chr <- gene_da_coords$chr[i]
+        gene_tss <- gene_da_coords$tss[i]
+        
+        # Define regulatory windows
+        promoter_start <- gene_tss - 2000
+        promoter_end <- gene_tss + 2000
+        distal_start <- gene_tss - 50000
+        distal_end <- gene_tss + 50000
+        
+        # Filter to same chromosome
+        tf_positions_chr <- all_tf_positions[seqnames(all_tf_positions) == gene_chr]
+        
+        if(length(tf_positions_chr) == 0) next
+        
+        # Check for promoter binding
+        promoter_hits <- tf_positions_chr[start(tf_positions_chr) >= promoter_start & 
+                                            end(tf_positions_chr) <= promoter_end]
+        
+        # Check for distal binding
+        distal_hits <- tf_positions_chr[start(tf_positions_chr) >= distal_start & 
+                                          end(tf_positions_chr) <= distal_end &
+                                          (end(tf_positions_chr) < promoter_start | 
+                                             start(tf_positions_chr) > promoter_end)]
+        
+        # Record relationships
+        if(length(promoter_hits) > 0) {
+          tf_target_relationships <- rbind(tf_target_relationships,
+                                           data.frame(
+                                             TF = tf,
+                                             Target_Gene = gene_name,
+                                             Location = "Promoter",
+                                             Distance_to_TSS = 0,
+                                             N_Binding_Sites = length(promoter_hits),
+                                             Cluster = cluster,
+                                             Comparison = comp_name,
+                                             TF_Also_DA = tf %in% tf_genes_in_da,
+                                             stringsAsFactors = FALSE
+                                           ))
+        }
+        
+        if(length(distal_hits) > 0) {
+          distances <- abs(start(distal_hits) - gene_tss)
+          min_distance <- min(distances)
+          
+          tf_target_relationships <- rbind(tf_target_relationships,
+                                           data.frame(
+                                             TF = tf,
+                                             Target_Gene = gene_name,
+                                             Location = "Distal",
+                                             Distance_to_TSS = min_distance,
+                                             N_Binding_Sites = length(distal_hits),
+                                             Cluster = cluster,
+                                             Comparison = comp_name,
+                                             TF_Also_DA = tf %in% tf_genes_in_da,
+                                             stringsAsFactors = FALSE
+                                           ))
+        }
+      }
+    }
+    
+    # Remove duplicates (keep promoter if both exist)
+    if(nrow(tf_target_relationships) > 0) {
+      # Sort by distance (promoter will be 0, so it comes first)
+      tf_target_relationships <- tf_target_relationships[
+        order(tf_target_relationships$TF, 
+              tf_target_relationships$Target_Gene,
+              tf_target_relationships$Distance_to_TSS), 
+      ]
+      
+      # Keep first occurrence (which will be promoter if it exists)
+      tf_target_relationships <- tf_target_relationships[
+        !duplicated(paste(tf_target_relationships$TF, 
+                          tf_target_relationships$Target_Gene,
+                          tf_target_relationships$Cluster,
+                          tf_target_relationships$Comparison)), 
+      ]
+      
+      cat(paste("    TF-target links:", nrow(tf_target_relationships), "\n"))
+      
+      # Save for this cluster
+      write.csv(tf_target_relationships,
+                paste0("TF_Target_Network_", s1, "_", s2, "_", cluster, "_AllMotifs_2025-10-10.csv"),
+                row.names = FALSE)
+      
+      all_tf_target_relationships <- rbind(all_tf_target_relationships, 
+                                           tf_target_relationships)
+    } else {
+      cat("    No TF-target links identified\n")
+    }
+    
+    #####################################################
+    # Integration summary for this cluster
+    #####################################################
+    
+    n_promoter <- sum(tf_target_relationships$Location == "Promoter")
+    n_distal <- sum(tf_target_relationships$Location == "Distal")
+    n_tf_also_da <- sum(tf_target_relationships$TF_Also_DA)
+    
+    integration_summary <- data.frame(
+      Cluster = cluster,
+      Comparison = comp_name,
+      N_DA_Motifs = nrow(all_motifs),
+      N_DA_Genes = nrow(gene_unions),
+      N_TFs_Also_DA = length(tf_genes_in_da),
+      TFs_Also_DA = paste(tf_genes_in_da, collapse = "; "),
+      N_TF_Target_Links = nrow(tf_target_relationships),
+      N_Promoter_Links = n_promoter,
+      N_Distal_Links = n_distal,
+      N_High_Confidence_Links = n_tf_also_da,
+      N_Unique_TFs = n_distinct(tf_target_relationships$TF),
+      N_Unique_Targets = n_distinct(tf_target_relationships$Target_Gene),
+      stringsAsFactors = FALSE
+    )
+    
+    integration_summary_list[[paste0(s1, "_", s2, "_", cluster)]] <- integration_summary
+    
+    cat("\n")
+  }
+}
+
+#####################################################
+# Save master integration summary
+#####################################################
+
+if(length(integration_summary_list) > 0) {
+  
+  master_integration_summary <- do.call(rbind, integration_summary_list)
+  
+  write.csv(master_integration_summary,
+            "Motif_Gene_Integration_Summary_AllMotifs_2025-10-10.csv",
+            row.names = FALSE)
+  
+  cat("\n=== INTEGRATION SUMMARY ===\n")
+  print(master_integration_summary)
+  cat("\n")
+}
+
+#####################################################
+# Analyze combined TF-target networks
+#####################################################
+
+if(nrow(all_tf_target_relationships) > 0) {
+  
+  write.csv(all_tf_target_relationships,
+            "All_TF_Target_Networks_AllMotifs_2025-10-10.csv",
+            row.names = FALSE)
+  
+  cat("\n=== TF-TARGET NETWORK SUMMARY ===\n")
+  cat(paste("Total TF-target relationships:", nrow(all_tf_target_relationships), "\n"))
+  cat(paste("Unique TFs:", n_distinct(all_tf_target_relationships$TF), "\n"))
+  cat(paste("Unique target genes:", n_distinct(all_tf_target_relationships$Target_Gene), "\n"))
+  cat(paste("Promoter links:", sum(all_tf_target_relationships$Location == "Promoter"), "\n"))
+  cat(paste("Distal links:", sum(all_tf_target_relationships$Location == "Distal"), "\n"))
+  cat(paste("High-confidence (TF also DA):", 
+            sum(all_tf_target_relationships$TF_Also_DA), "\n\n"))
+  
+  #####################################################
+  # TF connectivity analysis
+  #####################################################
+  
+  tf_connectivity <- all_tf_target_relationships %>%
+    group_by(TF) %>%
+    summarise(
+      N_Targets = n_distinct(Target_Gene),
+      N_Clusters = n_distinct(Cluster),
+      N_Promoter = sum(Location == "Promoter"),
+      N_Distal = sum(Location == "Distal"),
+      Avg_Distance = mean(Distance_to_TSS[Location == "Distal"]),
+      TF_Also_DA = any(TF_Also_DA),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(N_Targets))
+  
+  cat("=== TOP CONNECTED TFs (most target genes) ===\n")
+  print(head(tf_connectivity, 20))
+  cat("\n")
+  
+  write.csv(tf_connectivity,
+            "TF_Connectivity_Summary_AllMotifs_2025-10-10.csv",
+            row.names = FALSE)
+  
+  #####################################################
+  # Target gene connectivity
+  #####################################################
+  
+  target_connectivity <- all_tf_target_relationships %>%
+    group_by(Target_Gene) %>%
+    summarise(
+      N_TFs = n_distinct(TF),
+      N_Clusters = n_distinct(Cluster),
+      N_Promoter_TFs = sum(Location == "Promoter"),
+      N_Distal_TFs = sum(Location == "Distal"),
+      TFs = paste(unique(TF), collapse = "; "),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(N_TFs))
+  
+  cat("=== MOST TARGETED GENES (regulated by most TFs) ===\n")
+  print(head(target_connectivity, 20))
+  cat("\n")
+  
+  write.csv(target_connectivity,
+            "Target_Gene_Connectivity_Summary_AllMotifs_2025-10-10.csv",
+            row.names = FALSE)
+  
+  #####################################################
+  # High-confidence TF-target pairs (TF also DA)
+  #####################################################
+  
+  high_confidence <- all_tf_target_relationships %>%
+    filter(TF_Also_DA == TRUE) %>%
+    arrange(Cluster, TF, Target_Gene)
+  
+  cat("=== HIGH-CONFIDENCE TF-TARGET PAIRS ===\n")
+  cat("(TF motif active AND TF gene differentially accessible)\n")
+  cat(paste("Total:", nrow(high_confidence), "relationships\n\n"))
+  
+  if(nrow(high_confidence) > 0) {
+    print(head(high_confidence, 20))
+    cat("\n")
+    
+    write.csv(high_confidence,
+              "High_Confidence_TF_Target_Links_2025-10-10.csv",
+              row.names = FALSE)
+  }
+  
+  #####################################################
+  # Location distribution
+  #####################################################
+  
+  location_summary <- all_tf_target_relationships %>%
+    group_by(Location) %>%
+    summarise(
+      Count = n(),
+      Percentage = round(n() / nrow(all_tf_target_relationships) * 100, 1),
+      .groups = "drop"
+    )
+  
+  cat("=== TF BINDING LOCATION DISTRIBUTION ===\n")
+  print(location_summary)
+  cat("\n")
+  
+} else {
+  cat("\nNo TF-target relationships identified\n")
+}
+
+#####################################################
+# FINAL SUMMARY
+#####################################################
+
+cat("\n========================================\n")
+cat("ANALYSIS COMPLETE!\n")
+cat("========================================\n\n")
+
+cat("FILES GENERATED:\n")
+cat("================\n\n")
+
+cat("PART 2 - TF FAMILY ENRICHMENT:\n")
+cat("  • TF_Family_Summary_All_DA_Motifs_2025-10-10.csv\n")
+cat("  • TF_Family_By_Comparison_AllMotifs_2025-10-10.csv\n")
+cat("  • TF_Families_Shared_Across_Comparisons_2025-10-10.csv\n")
+cat("  • TF_Families_Comparison_Specific_2025-10-10.csv\n")
+cat("  • TF_Families_By_Effect_Size_2025-10-10.csv\n")
+cat("  • TF_Family_Cluster_Heatmap_AllMotifs_2025-10-10.pdf\n\n")
+
+cat("PART 3 - MOTIF-GENE INTEGRATION:\n")
+cat("  • TF_Target_Network_[samples]_[cluster]_AllMotifs_2025-10-10.csv\n")
+cat("  • All_TF_Target_Networks_AllMotifs_2025-10-10.csv\n")
+cat("  • Motif_Gene_Integration_Summary_AllMotifs_2025-10-10.csv\n")
+cat("  • TF_Connectivity_Summary_AllMotifs_2025-10-10.csv\n")
+cat("  • Target_Gene_Connectivity_Summary_AllMotifs_2025-10-10.csv\n")
+cat("  • High_Confidence_TF_Target_Links_2025-10-10.csv\n\n")
+
+cat("KEY INSIGHTS TO EXPLORE:\n")
+cat("========================\n")
+cat("1. TF families active across multiple comparisons = core regulators\n")
+cat("2. Comparison-specific TF families = context-dependent regulators\n")
+cat("3. High-confidence links (TF also DA) = priority for validation\n")
+cat("4. Highly connected TFs = master regulators\n")
+cat("5. Genes targeted by multiple TFs = key regulatory hubs\n\n")
+
+# Save project
+saveArchRProject(ArchRProj = projP_3, 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 load = FALSE)
+
+cat("Project saved successfully!\n")
+
+
+
+
+
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
+###############################################
