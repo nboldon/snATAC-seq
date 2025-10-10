@@ -182,9 +182,6 @@ cat("Bidirectional motif comparisons complete!\n\n")
 #####################################################
 #####################################################
 
-cat("\n========================================\n")
-cat("IDENTIFYING MOTIF UNIONS\n")
-cat("========================================\n\n")
 
 # Function to find motif unions
 find_motif_unions <- function(file1, file2, sample1, sample2, cluster) {
@@ -260,9 +257,6 @@ for(pair in comparison_pairs) {
 # CREATE SUMMARY STATISTICS
 #####################################################
 
-cat("\n========================================\n")
-cat("GENERATING SUMMARY STATISTICS\n")
-cat("========================================\n\n")
 
 summary_df <- data.frame(
   Comparison = character(),
@@ -334,9 +328,6 @@ cat(paste("Clusters with motif unions:",
 #####################################################
 #####################################################
 
-cat("\n========================================\n")
-cat("CREATING MOTIF UNION VISUALIZATIONS\n")
-cat("========================================\n\n")
 
 # Function to create motif deviation plot
 create_motif_union_plot <- function(markers_file, union_file, sample1, sample2, cluster) {
@@ -476,3 +467,4 @@ cat("• Validate key TFs experimentally\n\n")
 
 # Save project
 saveArchRProject(ArchRProj = projP_3, outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", load = FALSE)
+
