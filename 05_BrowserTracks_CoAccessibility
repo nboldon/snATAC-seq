@@ -1,0 +1,682 @@
+#####################################################
+#####################################################
+## COMPLETE WORKFLOW: PEAK ANNOTATION + BROWSER TRACKS
+## 
+## PART 1: Annotate peaks with gene names
+## PART 2: Generate browser tracks with co-accessibility
+##
+#####################################################
+#####################################################
+
+library(ArchR)
+library(GenomicRanges)
+library(dplyr)
+library(ggplot2)
+
+setwd("/Volumes/DataBox2/archR_analysis")
+
+# Load project
+projP_3 <- loadArchRProject(path = "/Volumes/DataBox2/Save-ProjP_3", 
+                            force = FALSE, showLogo = FALSE)
+
+#####################################################
+#####################################################
+## PART 1: ANNOTATE PEAKS WITH NEAREST GENE NAMES
+#####################################################
+#####################################################
+
+
+#####################################################
+## STEP 1.1: LOAD ALL PEAK COMPARISON FILES
+#####################################################
+
+peak_files <- list.files(pattern = "_all_peak_comparisons_combined.csv")
+
+if(length(peak_files) == 0) {
+  stop("No combined peak files found! Check working directory: ", getwd())
+}
+
+cat(paste("Found", length(peak_files), "peak files to annotate\n\n"))
+
+#####################################################
+## STEP 1.2: GET GENE ANNOTATIONS
+#####################################################
+
+genes <- getGenes(projP_3)
+
+cat(paste("  ✓ Loaded", length(genes), "gene annotations\n"))
+cat(paste("  Example genes:", paste(head(genes$symbol, 10), collapse = ", "), "\n\n"))
+
+#####################################################
+## STEP 1.3: ANNOTATE EACH PEAK FILE
+#####################################################
+
+for(file in peak_files) {
+  
+  cluster_name <- gsub("_all_peak_comparisons_combined.csv", "", file)
+  cat(paste("Processing", cluster_name, "...\n"))
+  
+  peaks_df <- read.csv(file, row.names = 1, stringsAsFactors = FALSE)
+  
+  if(nrow(peaks_df) == 0) {
+    cat("  ⚠ File is empty, skipping\n\n")
+    next
+  }
+  
+  cat(paste("  Loaded", nrow(peaks_df), "peaks\n"))
+  
+  # Create GRanges object from peaks
+  peaks_gr <- GRanges(
+    seqnames = peaks_df$seqnames,
+    ranges = IRanges(start = peaks_df$start, end = peaks_df$end)
+  )
+  
+  # Find nearest gene for each peak
+  cat("  Finding nearest genes...\n")
+  nearest_genes <- distanceToNearest(peaks_gr, genes)
+  
+  # Extract gene information
+  gene_names <- genes$symbol[subjectHits(nearest_genes)]
+  gene_distances <- mcols(nearest_genes)$distance
+  
+  # Add to dataframe
+  peaks_df$nearestGene <- gene_names
+  peaks_df$distanceToGene <- gene_distances
+  peaks_df$geneID <- names(genes)[subjectHits(nearest_genes)]
+  
+  cat(paste("  ✓ Annotated with", length(unique(gene_names)), "unique genes\n"))
+  cat(paste("    Mean distance to nearest gene:", round(mean(gene_distances)), "bp\n"))
+  
+  # Save annotated file
+  output_file <- paste0(cluster_name, "_all_peak_comparisons_ANNOTATED.csv")
+  write.csv(peaks_df, output_file, row.names = TRUE)
+  cat(paste("  ✓ Saved:", output_file, "\n\n"))
+  
+  # Update original file
+  write.csv(peaks_df, file, row.names = TRUE)
+}
+
+#####################################################
+## STEP 1.4: CREATE ANNOTATION SUMMARY
+#####################################################
+
+all_annotated_peaks <- list()
+
+for(file in peak_files) {
+  cluster_name <- gsub("_all_peak_comparisons_combined.csv", "", file)
+  peaks_df <- read.csv(file, row.names = 1, stringsAsFactors = FALSE)
+  
+  if(nrow(peaks_df) > 0 && "nearestGene" %in% colnames(peaks_df)) {
+    peaks_df$cluster <- cluster_name
+    all_annotated_peaks[[cluster_name]] <- peaks_df
+  }
+}
+
+if(length(all_annotated_peaks) > 0) {
+  
+  all_peaks_combined <- do.call(rbind, all_annotated_peaks)
+  
+  cat(paste("Total annotated peaks:", nrow(all_peaks_combined), "\n"))
+  cat(paste("Unique genes:", length(unique(all_peaks_combined$nearestGene)), "\n\n"))
+  
+  write.csv(all_peaks_combined, "MASTER_ALL_PEAKS_ANNOTATED.csv", row.names = TRUE)
+  cat("✓ Saved: MASTER_ALL_PEAKS_ANNOTATED.csv\n\n")
+  
+  # Gene-level summary
+  gene_summary <- all_peaks_combined %>%
+    group_by(nearestGene) %>%
+    summarise(
+      n_peaks = n(),
+      n_clusters = length(unique(cluster)),
+      clusters = paste(unique(cluster), collapse = ";"),
+      comparisons = paste(unique(Comparison), collapse = ";"),
+      mean_absLog2FC = mean(abs(Log2FC), na.rm = TRUE),
+      min_FDR = min(FDR, na.rm = TRUE),
+      mean_distanceToGene = mean(distanceToGene, na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    arrange(desc(n_peaks), min_FDR)
+  
+  write.csv(gene_summary, "Gene_Level_Peak_Summary.csv", row.names = FALSE)
+  cat("✓ Saved: Gene_Level_Peak_Summary.csv\n\n")
+  
+  cat("Top 20 genes by number of nearby differential peaks:\n")
+  print(head(gene_summary, 20))
+  cat("\n")
+  
+  #####################################################
+  ## STEP 1.5: CROSS-REFERENCE WITH MARKER GENES
+  #####################################################
+  
+  cat("Cross-referencing with marker genes...\n\n")
+  
+  marker_files <- list.files(pattern = "^sample[0-9]_vs_sample[0-9]_.+_markers\\.csv$")
+  
+  if(length(marker_files) > 0) {
+    
+    all_marker_genes <- list()
+    
+    for(file in marker_files) {
+      markers <- read.csv(file, row.names = 1, stringsAsFactors = FALSE)
+      if(nrow(markers) > 0) {
+        comparison <- gsub("_markers.csv", "", file)
+        markers$comparison <- comparison
+        all_marker_genes[[comparison]] <- markers
+      }
+    }
+    
+    if(length(all_marker_genes) > 0) {
+      all_markers_combined <- do.call(rbind, all_marker_genes)
+      
+      marker_gene_names <- unique(all_markers_combined$name)
+      peak_gene_names <- unique(all_peaks_combined$nearestGene)
+      
+      overlapping_genes <- intersect(marker_gene_names, peak_gene_names)
+      
+      cat(paste("Genes with BOTH peak and gene score changes:", length(overlapping_genes), "\n\n"))
+      
+      if(length(overlapping_genes) > 0) {
+        
+        # Detailed overlap summary
+        peak_info <- all_peaks_combined %>%
+          filter(nearestGene %in% overlapping_genes) %>%
+          group_by(nearestGene) %>%
+          summarise(
+            n_diff_peaks = n(),
+            peak_clusters = paste(unique(cluster), collapse = ";"),
+            mean_peak_Log2FC = mean(abs(Log2FC), na.rm = TRUE),
+            min_peak_FDR = min(FDR, na.rm = TRUE),
+            .groups = 'drop'
+          )
+        
+        marker_info <- all_markers_combined %>%
+          filter(name %in% overlapping_genes) %>%
+          group_by(name) %>%
+          summarise(
+            n_marker_comparisons = n(),
+            marker_comparisons = paste(unique(comparison), collapse = ";"),
+            mean_marker_Log2FC = mean(abs(Log2FC), na.rm = TRUE),
+            min_marker_FDR = min(FDR, na.rm = TRUE),
+            .groups = 'drop'
+          )
+        
+        overlap_summary <- merge(
+          data.frame(gene = overlapping_genes, stringsAsFactors = FALSE),
+          peak_info, by.x = "gene", by.y = "nearestGene", all.x = TRUE
+        )
+        overlap_summary <- merge(overlap_summary, marker_info, 
+                                 by.x = "gene", by.y = "name", all.x = TRUE)
+        
+        overlap_summary <- overlap_summary %>%
+          arrange(min_peak_FDR, min_marker_FDR)
+        
+        write.csv(overlap_summary, "Genes_with_Peak_AND_GeneScore_Changes.csv", row.names = FALSE)
+        cat("✓ Saved: Genes_with_Peak_AND_GeneScore_Changes.csv\n\n")
+        
+        cat("Top 20 genes with both changes:\n")
+        print(head(overlap_summary, 20))
+        cat("\n")
+      }
+    }
+  }
+  
+  # Visualizations
+  top_genes_plot <- gene_summary %>%
+    head(30) %>%
+    ggplot(aes(x = reorder(nearestGene, n_peaks), y = n_peaks, fill = mean_absLog2FC)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    scale_fill_viridis_c(option = "plasma") +
+    labs(title = "Top 30 Genes by Number of Nearby Differential Peaks",
+         x = "Gene", y = "Number of Differential Peaks",
+         fill = "Mean |Log2FC|") +
+    theme_bw() +
+    theme(axis.text.y = element_text(size = 8),
+          plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  ggsave("Top_Genes_by_Peak_Count.pdf", top_genes_plot, width = 10, height = 12)
+  cat("✓ Saved: Top_Genes_by_Peak_Count.pdf\n\n")
+}
+
+saveArchRProject(ArchRProj = projP_3, 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 load = FALSE)
+
+
+
+#####################################################
+#####################################################
+## PART 2: GENERATE BROWSER TRACKS
+#####################################################
+#####################################################
+
+
+#####################################################
+## STEP 2.1: LOAD ANNOTATED PEAK DATA
+#####################################################
+
+if(!file.exists("MASTER_ALL_PEAKS_ANNOTATED.csv")) {
+  stop("MASTER_ALL_PEAKS_ANNOTATED.csv not found!")
+}
+
+cat("Loading annotated peak data...\n")
+all_peaks_annotated <- read.csv("MASTER_ALL_PEAKS_ANNOTATED.csv", 
+                                row.names = 1, stringsAsFactors = FALSE)
+
+cat(paste("  ✓ Loaded", nrow(all_peaks_annotated), "annotated peaks\n"))
+cat(paste("  ✓ Unique genes:", length(unique(all_peaks_annotated$nearestGene)), "\n\n"))
+
+
+#####################################################
+## STEP 2.2: ADD CO-ACCESSIBILITY LINKS
+#####################################################
+
+# Check for co-accessibility
+has_coaccessibility <- "CoAccessibility" %in% names(projP_3@projectMetadata)
+
+if (!has_coaccessibility) {
+  cat("Adding co-accessibility links...\n")
+  
+  tryCatch({
+    projP_3 <- addCoAccessibility(
+      ArchRProj = projP_3,
+      reducedDims = "Harmony" #OR IterativeLSI
+    )
+    
+    cat("✓ Co-accessibility links added successfully!\n")
+    has_coaccessibility <- TRUE
+    
+    saveArchRProject(
+      ArchRProj = projP_3, 
+      outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+      load = FALSE
+    )
+    
+  }, error = function(e) {
+    cat(paste("⚠ Error adding co-accessibility links:", e$message, "\n"))
+    cat("  Continuing without co-accessibility loops...\n")
+    has_coaccessibility <- FALSE
+  })
+} else {
+  cat("✓ Co-accessibility links already present\n")
+}
+
+
+
+#####################################################
+## STEP 2.3: PRIORITIZE GENES FOR BROWSER TRACKS
+#####################################################
+
+
+# Priority 1: Genes with both peak and gene score changes
+if(file.exists("Genes_with_Peak_AND_GeneScore_Changes.csv")) {
+  priority1_genes <- read.csv("Genes_with_Peak_AND_GeneScore_Changes.csv", 
+                              stringsAsFactors = FALSE)
+  priority1_top <- priority1_genes %>%
+    arrange(min_peak_FDR, min_marker_FDR) %>%
+    head(20) %>%
+    pull(gene)
+  cat(paste("  Priority 1:", length(priority1_top), "genes (peak + gene score)\n"))
+} else {
+  priority1_top <- character(0)
+}
+
+# Priority 2: Genes with most differential peaks
+gene_summary <- read.csv("Gene_Level_Peak_Summary.csv", stringsAsFactors = FALSE)
+priority2_top <- gene_summary %>%
+  arrange(desc(n_peaks), min_FDR) %>%
+  head(30) %>%
+  pull(nearestGene)
+cat(paste("  Priority 2:", length(priority2_top), "genes (most peaks)\n"))
+
+# Priority 3: Top genes per cluster
+priority3_genes <- all_peaks_annotated %>%
+  group_by(cluster, nearestGene) %>%
+  summarise(
+    n_peaks = n(),
+    min_FDR = min(FDR, na.rm = TRUE),
+    max_absLog2FC = max(abs(Log2FC), na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  group_by(cluster) %>%
+  arrange(min_FDR, desc(max_absLog2FC)) %>%
+  slice_head(n = 3) %>%
+  ungroup()
+
+priority3_top <- unique(priority3_genes$nearestGene)
+cat(paste("  Priority 3:", length(priority3_top), "genes (top per cluster)\n\n"))
+
+all_priority_genes <- unique(c(priority1_top, priority2_top, priority3_top))
+
+# Verify genes exist
+gene_annotation <- getGenes(projP_3)
+available_genes <- gene_annotation$symbol
+valid_genes <- all_priority_genes[all_priority_genes %in% available_genes]
+
+cat(paste("Valid genes to plot:", length(valid_genes), "\n\n"))
+
+
+#####################################################
+## STEP 2.4: BROWSER TRACK FUNCTIONS
+#####################################################
+
+
+create_gene_browser_track <- function(gene_symbol, upstream = 50000, downstream = 50000) {
+  cat(paste("Creating browser track for", gene_symbol, "...\n"))
+  
+  tryCatch({
+    if (has_coaccessibility) {
+      loops_obj <- getCoAccessibility(projP_3)
+      p <- plotBrowserTrack(
+        ArchRProj = projP_3,
+        groupBy = "sample",
+        geneSymbol = gene_symbol,
+        upstream = upstream,
+        downstream = downstream,
+        loops = loops_obj,
+        plotSummary = c("bulkTrack", "featureTrack", "loopTrack", "geneTrack")
+      )
+    } else {
+      p <- plotBrowserTrack(
+        ArchRProj = projP_3,
+        groupBy = "sample",
+        geneSymbol = gene_symbol,
+        upstream = upstream,
+        downstream = downstream,
+        plotSummary = c("bulkTrack", "featureTrack", "geneTrack")
+      )
+    }
+    
+    if (is.null(p) || length(p) == 0 || !gene_symbol %in% names(p)) {
+      cat("  ✗ Plot creation failed\n")
+      return(FALSE)
+    }
+    
+    pdf_filename <- paste0("BrowserTrack_", gene_symbol, "_by_Sample.pdf")
+    pdf(pdf_filename, width = 12, height = 10)
+    grid::grid.newpage()
+    grid::grid.draw(p[[gene_symbol]])
+    dev.off()
+    
+    file_size <- file.info(pdf_filename)$size
+    if (file_size < 1000) {
+      cat("  ⚠ PDF is very small\n")
+      return(FALSE)
+    } else {
+      cat(paste("  ✓ Saved:", pdf_filename, "(", round(file_size/1024), "KB )\n"))
+      return(TRUE)
+    }
+  }, error = function(e) {
+    cat(paste("  ✗ Error:", e$message, "\n"))
+    while (dev.cur() > 1) dev.off()
+    return(FALSE)
+  })
+}
+
+create_cluster_browser_track <- function(gene_symbol, cluster_name, upstream = 50000, downstream = 50000) {
+  cat(paste("Creating track for", gene_symbol, "in", cluster_name, "...\n"))
+  
+  tryCatch({
+    projSubset <- projP_3[projP_3$Clusters == cluster_name, ]
+    if (length(projSubset$cellNames) == 0) {
+      cat("  ✗ No cells\n")
+      return(FALSE)
+    }
+    
+    if (has_coaccessibility) {
+      loops_obj <- getCoAccessibility(projP_3)
+      p <- plotBrowserTrack(
+        ArchRProj = projSubset,
+        groupBy = "sample",
+        geneSymbol = gene_symbol,
+        upstream = upstream,
+        downstream = downstream,
+        loops = loops_obj,
+        plotSummary = c("bulkTrack", "featureTrack", "loopTrack", "geneTrack")
+      )
+    } else {
+      p <- plotBrowserTrack(
+        ArchRProj = projSubset,
+        groupBy = "sample",
+        geneSymbol = gene_symbol,
+        upstream = upstream,
+        downstream = downstream,
+        plotSummary = c("bulkTrack", "featureTrack", "geneTrack")
+      )
+    }
+    
+    if (is.null(p) || length(p) == 0 || !gene_symbol %in% names(p)) {
+      cat("  ✗ Plot failed\n")
+      return(FALSE)
+    }
+    
+    pdf_filename <- paste0("BrowserTrack_", gene_symbol, "_", cluster_name, "_by_Sample.pdf")
+    pdf(pdf_filename, width = 12, height = 10)
+    grid::grid.newpage()
+    grid::grid.draw(p[[gene_symbol]])
+    dev.off()
+    
+    file_size <- file.info(pdf_filename)$size
+    if (file_size > 1000) {
+      cat(paste("  ✓ Saved:", pdf_filename, "\n"))
+      return(TRUE)
+    }
+    return(FALSE)
+  }, error = function(e) {
+    cat(paste("  ✗ Error:", e$message, "\n"))
+    while (dev.cur() > 1) dev.off()
+    return(FALSE)
+  })
+}
+
+# Generate browser tracks
+# Priority 1
+if (length(priority1_top) > 0) {
+  cat("\n=== PRIORITY 1: PEAK + GENE SCORE ===\n\n")
+  
+  browser_dir1 <- "BrowserTracks_Priority1_Peak_AND_GeneScore"
+  if (!dir.exists(browser_dir1)) dir.create(browser_dir1, recursive = TRUE)
+  setwd(browser_dir1)
+  
+  genes_to_plot <- priority1_top[priority1_top %in% valid_genes]
+  success_count <- sum(sapply(genes_to_plot, create_gene_browser_track))
+  
+  cat(paste("\n✓ Created", success_count, "of", length(genes_to_plot), "tracks\n\n"))
+  setwd("..")
+}
+
+
+# Priority 2
+cat("=== PRIORITY 2: MOST PEAKS ===\n\n")
+browser_dir2 <- "BrowserTracks_Priority2_Most_Peaks"
+if (!dir.exists(browser_dir2)) dir.create(browser_dir2, recursive = TRUE)
+setwd(browser_dir2)
+
+genes_to_plot <- head(priority2_top[priority2_top %in% valid_genes], 20)
+success_count <- sum(sapply(genes_to_plot, create_gene_browser_track))
+
+cat(paste("\n✓ Created", success_count, "of", length(genes_to_plot), "tracks\n\n"))
+setwd("..")
+
+
+# Priority 3: Cluster-specific
+cat("=== CLUSTER-SPECIFIC TRACKS ===\n\n")
+browser_dir3 <- "BrowserTracks_Priority3_By_Cluster"
+if (!dir.exists(browser_dir3)) dir.create(browser_dir3, recursive = TRUE)
+setwd(browser_dir3)
+
+priority3_genes_valid <- priority3_genes %>%
+  filter(nearestGene %in% valid_genes)
+
+for (cluster in unique(priority3_genes_valid$cluster)) {
+  cat(paste("\n--- Cluster:", cluster, "---\n"))
+  
+  cluster_genes <- priority3_genes_valid %>%
+    filter(cluster == !!cluster) %>%
+    pull(nearestGene)
+  
+  for (gene in cluster_genes) {
+    create_cluster_browser_track(gene, cluster)
+  }
+}
+setwd("..")
+
+
+# High-priority clusters
+cat("\n=== HIGH-PRIORITY CLUSTERS (C18, C15, C1) ===\n\n")
+browser_dir4 <- "BrowserTracks_PriorityClusters"
+if (!dir.exists(browser_dir4)) dir.create(browser_dir4, recursive = TRUE)
+setwd(browser_dir4)
+
+for (cluster in c("C18", "C15", "C1")) {
+  cat(paste("\n--- Cluster:", cluster, "---\n"))
+  
+  cluster_genes <- all_peaks_annotated %>%
+    filter(cluster == !!cluster) %>%
+    group_by(nearestGene) %>%
+    summarise(min_FDR = min(FDR, na.rm = TRUE), .groups = 'drop') %>%
+    arrange(min_FDR) %>%
+    head(10) %>%
+    pull(nearestGene) %>%
+    intersect(valid_genes)
+  
+  for (gene in cluster_genes) {
+    create_cluster_browser_track(gene, cluster)
+  }
+}
+setwd("..")
+
+
+
+#####################################################
+## STEP 2.5: GENERATE PRIORITY 1 TRACKS
+#####################################################
+
+if(length(priority1_top) > 0) {
+  cat("\n=== PRIORITY 1: PEAK + GENE SCORE ===\n\n")
+  
+  browser_dir1 <- "BrowserTracks_Priority1_Peak_AND_GeneScore"
+  if(!dir.exists(browser_dir1)) dir.create(browser_dir1, recursive = TRUE)
+  setwd(browser_dir1)
+  
+  genes_to_plot <- priority1_top[priority1_top %in% valid_genes]
+  
+  success_count <- 0
+  for(gene in genes_to_plot) {
+    if(create_gene_browser_track(gene)) success_count <- success_count + 1
+  }
+  
+  cat(paste("\n✓ Created", success_count, "of", length(genes_to_plot), "tracks\n\n"))
+  setwd("..")
+}
+
+#####################################################
+## STEP 2.6: GENERATE PRIORITY 2 TRACKS
+#####################################################
+
+cat("=== PRIORITY 2: MOST PEAKS ===\n\n")
+
+browser_dir2 <- "BrowserTracks_Priority2_Most_Peaks"
+if(!dir.exists(browser_dir2)) dir.create(browser_dir2, recursive = TRUE)
+setwd(browser_dir2)
+
+genes_to_plot <- head(priority2_top[priority2_top %in% valid_genes], 20)
+
+success_count <- 0
+for(gene in genes_to_plot) {
+  if(create_gene_browser_track(gene)) success_count <- success_count + 1
+}
+
+cat(paste("\n✓ Created", success_count, "of", length(genes_to_plot), "tracks\n\n"))
+setwd("..")
+
+#####################################################
+## STEP 2.7: CLUSTER-SPECIFIC TRACKS
+#####################################################
+
+cat("=== CLUSTER-SPECIFIC TRACKS ===\n\n")
+
+browser_dir3 <- "BrowserTracks_Priority3_By_Cluster"
+if(!dir.exists(browser_dir3)) dir.create(browser_dir3, recursive = TRUE)
+setwd(browser_dir3)
+
+priority3_genes_valid <- priority3_genes %>%
+  filter(nearestGene %in% valid_genes)
+
+for(cluster in unique(priority3_genes_valid$cluster)) {
+  cat(paste("\n--- Cluster:", cluster, "---\n"))
+  
+  cluster_genes <- priority3_genes_valid %>%
+    filter(cluster == !!cluster) %>%
+    pull(nearestGene)
+  
+  for(gene in cluster_genes) {
+    create_cluster_browser_track(gene, cluster)
+  }
+}
+
+setwd("..")
+
+#####################################################
+## STEP 2.8: HIGH-PRIORITY CLUSTERS
+#####################################################
+
+cat("\n=== HIGH-PRIORITY CLUSTERS (C18, C15, C1) ===\n\n")
+
+browser_dir4 <- "BrowserTracks_PriorityClusters"
+if(!dir.exists(browser_dir4)) dir.create(browser_dir4, recursive = TRUE)
+setwd(browser_dir4)
+
+for(cluster in c("C18", "C15", "C1")) {
+  cat(paste("\n--- Cluster:", cluster, "---\n"))
+  
+  cluster_genes <- all_peaks_annotated %>%
+    filter(cluster == !!cluster) %>%
+    group_by(nearestGene) %>%
+    summarise(min_FDR = min(FDR, na.rm = TRUE), .groups = 'drop') %>%
+    arrange(min_FDR) %>%
+    head(10) %>%
+    pull(nearestGene)
+  
+  cluster_genes <- cluster_genes[cluster_genes %in% valid_genes]
+  
+  for(gene in cluster_genes) {
+    create_cluster_browser_track(gene, cluster)
+  }
+}
+
+setwd("..")
+
+#####################################################
+## FINAL SUMMARY
+#####################################################
+
+cat("\n========================================\n")
+cat("WORKFLOW COMPLETE!\n")
+cat("========================================\n\n")
+
+cat("FILES CREATED:\n")
+cat("==============\n")
+cat("PART 1 - Annotation:\n")
+cat("  • MASTER_ALL_PEAKS_ANNOTATED.csv\n")
+cat("  • Gene_Level_Peak_Summary.csv\n")
+if(file.exists("Genes_with_Peak_AND_GeneScore_Changes.csv")) {
+  cat("  • Genes_with_Peak_AND_GeneScore_Changes.csv\n")
+}
+cat("\nPART 2 - Browser Tracks:\n")
+if(length(priority1_top) > 0) {
+  cat("  • BrowserTracks_Priority1_Peak_AND_GeneScore/\n")
+}
+cat("  • BrowserTracks_Priority2_Most_Peaks/\n")
+cat("  • BrowserTracks_Priority3_By_Cluster/\n")
+cat("  • BrowserTracks_PriorityClusters/\n\n")
+
+if(has_p2g) {
+  cat("✓ Browser tracks include co-accessibility loops!\n\n")
+}
+
+saveArchRProject(ArchRProj = projP_3, 
+                 outputDirectory = "/Volumes/DataBox2/Save-ProjP_3", 
+                 load = FALSE)
+
+cat("Project saved successfully!\n")
