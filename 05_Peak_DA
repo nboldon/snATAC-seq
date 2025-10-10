@@ -401,17 +401,6 @@ if(nrow(summary_data) > 0) {
 ## 8. PEAK HEATMAPS BY CLUSTER
 ###############################################
 
-library(ArchR)
-library(ggplot2)
-library(dplyr)
-library(pheatmap)
-library(viridis)
-
-
-###############################################
-## 8. SIMPLIFIED PEAK HEATMAPS BY CLUSTER
-###############################################
-
 library(ggplot2)
 library(dplyr)
 library(viridis)
@@ -449,7 +438,7 @@ create_peak_heatmap <- function(cluster_name, min_peaks = 20) {
                                    top_peaks$end)
   }
   
-  # Create matrix using ggplot2 instead
+  # Create matrix using ggplot2 
   peak_data_long <- top_peaks %>%
     select(peak_label, Comparison, Log2FC) %>%
     group_by(peak_label, Comparison) %>%
@@ -691,6 +680,53 @@ identify_reciprocal_peaks <- function(cluster_name) {
   return(NULL)
 }
 
+#####################################################
+# COMBINE ALL RECIPROCAL PEAK FILES BY CLUSTER
+#####################################################
+
+# After running identify_reciprocal_peaks for all clusters, 
+# combine individual reciprocal peak files if needed
+
+for(cluster in all_clusters) {
+  
+  print(paste("Checking for reciprocal peak files in", cluster))
+  
+  # Look for all reciprocal peak files for this cluster
+  reciprocal_files <- list.files(pattern = paste0("^", cluster, "_RECIPROCAL_PEAKS_.*\\.csv$"))
+  
+  if(length(reciprocal_files) > 0) {
+    print(paste("  Found", length(reciprocal_files), "reciprocal peak files"))
+    
+    cluster_reciprocal_list <- list()
+    
+    for(file in reciprocal_files) {
+      df <- read.csv(file, stringsAsFactors = FALSE)
+      if(nrow(df) > 0) {
+        cluster_reciprocal_list[[file]] <- df
+      }
+    }
+    
+    # Combine if multiple files exist
+    if(length(cluster_reciprocal_list) > 0) {
+      combined_reciprocal <- do.call(rbind, cluster_reciprocal_list)
+      
+      # Remove duplicate rows based on peak_id and comparison_pair
+      combined_reciprocal <- combined_reciprocal[!duplicated(
+        combined_reciprocal[, c("peak_id", "comparison_pair")]
+      ), ]
+      
+      write.csv(combined_reciprocal,
+                paste0(cluster, "_ALL_RECIPROCAL_PEAKS.csv"),
+                row.names = FALSE)
+      
+      print(paste("  ✓ Combined into", cluster, "_ALL_RECIPROCAL_PEAKS.csv with", 
+                  nrow(combined_reciprocal), "unique reciprocal peaks"))
+    }
+  } else {
+    print(paste("  No reciprocal peak files found for", cluster))
+  }
+}
+
 # Run reciprocal peak analysis for all clusters
 all_reciprocal_peak_results <- list()
 for(cluster in all_clusters) {
@@ -824,11 +860,9 @@ if(length(all_reciprocal_peak_results) > 0) {
   print(head(gene_summary, 30))
 }
 
-
 ################################################# 
 # EXPORT PEAK COORDINATES FOR IGV/UCSC
 ################################################
-
 # Export significant peaks in BED format for genome browser visualization
 export_peaks_to_bed <- function(cluster_name) {
   
@@ -863,8 +897,6 @@ for(cluster in all_clusters) {
 ################################################# 
 # SAVE PROJECT
 ################################################
-
 saveArchRProject(ArchRProj = projP_3, 
                  outputDirectory = "/Volumes/DataBox2/Save-ProjP_3",
                  load = FALSE)
-
